@@ -1008,6 +1008,7 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
             "interpreter": st.cfg.python,
             "script": st.cfg.python_script.as_ref().map(|p| p.display().to_string()),
         },
+        "version": env!("CARGO_PKG_VERSION"),
         "default_model": st.cfg.default_model,
         "url": url_info(&st.cfg, y.as_ref()),
         "klang_enabled": st.klang.is_some(),
@@ -1847,6 +1848,7 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
         assert_eq!(snabb["available"], true, "{info}");
         assert_eq!(snabb["label"], "Snabb");
         assert_eq!(info["default_model"], "small");
+        assert_eq!(info["version"], env!("CARGO_PKG_VERSION"));
         let (_, _, b) = call(&app, "GET", "/api/model-hint?duration_s=2400&model=small", None, None).await;
         let h: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_eq!(h["suggest"], "snabb", "{h}");
