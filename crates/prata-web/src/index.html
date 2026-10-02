@@ -2,8 +2,18 @@
 <html lang="sv">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#FAFAF9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C0C0E" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Prata">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <title>Prata – svensk tal till text</title>
 <style>
 :root{
@@ -139,7 +149,7 @@ h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
 .res-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:24px 24px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .res-head h2{font-size:20px;line-height:1.3;letter-spacing:-.02em;font-weight:500;margin:0 0 4px;word-break:break-all}
 .dls{display:flex;gap:8px;flex-wrap:wrap}
-.player{display:flex;align-items:center;gap:14px;padding:16px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.player{display:flex;align-items:center;gap:14px;padding:16px 24px;border-bottom:1px solid var(--line);position:sticky;top:calc(64px + env(safe-area-inset-top));background:var(--surface);z-index:2}
 .play{all:unset;cursor:pointer;width:40px;height:40px;border-radius:50%;background:var(--cta);color:var(--cta-ink);display:grid;place-items:center;flex:none}
 .play:focus-visible{outline:3px solid var(--ts);outline-offset:3px}
 .play .pause{display:none}.play.playing .pause{display:block}.play.playing .tri{display:none}
@@ -166,6 +176,94 @@ h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
 .seg-row.none{display:block;color:var(--ink-3)}
 mark{background:var(--hl);color:inherit;border-radius:3px;padding:0 2px}
 mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
+/* app shell, nav */
+html,body{min-height:100%}
+body{padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);-webkit-tap-highlight-color:transparent}
+header{position:sticky;top:0;z-index:20;background:var(--bg);padding-top:env(safe-area-inset-top);height:auto;min-height:64px;gap:12px}
+header .brand{text-decoration:none;color:var(--ink);min-height:44px}
+.tabs{display:inline-flex;padding:4px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--surface);gap:2px}
+.tabs a{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:var(--r-pill);font-size:13.5px;font-weight:500;color:var(--ink-3);text-decoration:none;white-space:nowrap}
+.tabs a:hover{color:var(--ink-2)}
+.tabs a[aria-current=page]{background:var(--surface-2);color:var(--ink);box-shadow:var(--sh-1),inset 0 0 0 1px var(--line-strong)}
+.tabs .count{font:500 11.5px/1 var(--font);color:var(--ink-3);background:var(--surface-2);border-radius:var(--r-pill);padding:3px 6px;min-width:18px;text-align:center}
+.tabs a[aria-current=page] .count{background:var(--surface)}
+.btn.danger{color:var(--err);border-color:var(--line-strong)}
+.btn.danger:hover{background:var(--err-soft)}
+.btn.dangerfill{background:var(--err);border-color:var(--err);color:#fff}
+.uplink{all:unset;cursor:pointer;display:none;margin:18px auto 0;font-size:14.5px;color:var(--ink-2);padding:10px 14px;border-radius:var(--r-pill)}
+.uplink u{text-decoration:none;color:var(--ink);font-weight:500;border-bottom:1px solid currentColor}
+/* recent notes on the record view */
+.recent-head{display:flex;justify-content:space-between;align-items:baseline}
+.recent-head a{font-size:13px;color:var(--ink-2)}
+/* notes list */
+.notes-layout{display:grid;grid-template-columns:minmax(300px,360px) 1fr;gap:24px;align-items:start;margin:28px 0 40px}
+.list-pane{position:sticky;top:84px;display:flex;flex-direction:column;gap:12px;max-height:calc(100dvh - 110px);min-height:0}
+.list-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.list-head h2{font-size:22px;letter-spacing:-.02em;font-weight:500;margin:0}
+.search.big{flex:none;height:44px;background:var(--surface);border:1px solid var(--line);padding:0 14px}
+.note-list{display:flex;flex-direction:column;gap:6px;overflow:auto;padding:2px;margin:-2px;overscroll-behavior:contain}
+.note-item{display:block;text-decoration:none;color:inherit;padding:14px 16px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--line);transition:background .15s,border-color .15s}
+.note-item:hover{border-color:var(--line-strong)}
+.note-item[aria-current=true]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.ni-title{font-weight:500;font-size:15px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.ni-meta{font-size:12.5px;color:var(--ink-3);margin-top:4px;font-variant-numeric:tabular-nums}
+.ni-snip{font-size:13.5px;color:var(--ink-2);margin-top:6px;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.day-h{font-size:12.5px;font-weight:600;color:var(--ink-2);letter-spacing:.01em;margin:12px 0 0;padding:4px 4px 2px;position:sticky;top:0;z-index:1;background:var(--bg)}
+.day-h:first-child{margin-top:0}
+.list-empty{padding:28px 16px;text-align:center;color:var(--ink-3);font-size:14px;border:1.5px dashed var(--line-strong);border-radius:var(--r-md)}
+.note-pane{min-width:0}
+.back{display:none;align-items:center;gap:4px;height:44px;margin:-8px 0 4px -6px;padding:0 8px;border-radius:var(--r-pill);font-size:15px;font-weight:500;color:var(--ink-2);text-decoration:none}
+.title-row{display:flex;align-items:flex-start;gap:6px}
+.res-head h2{cursor:text;word-break:break-word}
+.icon-btn{all:unset;cursor:pointer;flex:none;width:36px;height:36px;margin-top:-5px;border-radius:50%;display:grid;place-items:center;color:var(--ink-3)}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+.icon-btn:focus-visible{outline:3px solid var(--ts);outline-offset:1px}
+.rename{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.rename input{flex:1 1 220px;min-width:0;height:40px;padding:0 12px;border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-size:17px;font-weight:500}
+.rename input:focus{outline:3px solid var(--ts);outline-offset:0}
+/* confirm dialog */
+dialog{border:0;padding:0;border-radius:var(--r-lg);background:var(--surface);color:var(--ink);box-shadow:var(--sh-2);max-width:min(420px,calc(100vw - 32px));width:100%}
+dialog::backdrop{background:rgba(11,11,12,.45)}
+.dlg{padding:24px}
+.dlg h4{margin:0 0 6px;font-size:18px;font-weight:600;letter-spacing:-.01em}
+.dlg p{margin:0 0 20px;color:var(--ink-2);font-size:14.5px}
+.dlg .row{display:flex;gap:10px;justify-content:flex-end}
+@media (hover:none){.seg-row .cp{opacity:1}.recbtn:hover{transform:none}}
+@media (max-width:979px){
+  .notes-layout{grid-template-columns:1fr;margin-top:16px}
+  .list-pane{position:static;max-height:none}
+  .note-list{overflow:visible}
+  .notes-layout.has-note .list-pane{display:none}
+  .notes-layout:not(.has-note) .note-pane{display:none}
+  .back{display:inline-flex}
+}
+@media (max-width:640px){
+  .wrap{padding:0 16px}
+  header{min-height:56px}
+  #recStatus [aria-hidden]{display:none}
+  #recStatus .live{display:flex;justify-content:center;margin-bottom:2px}
+  .player{top:calc(56px + env(safe-area-inset-top))}
+  .tabs a{height:36px;padding:0 12px}
+  #viewRecord .hero{display:none}
+  #viewRecord .stage{margin:0 -16px;border-radius:0;padding:12px 16px 20px;min-height:calc(100dvh - 56px - env(safe-area-inset-top) - env(safe-area-inset-bottom));display:flex;flex-direction:column;justify-content:center}
+  .recorder{width:100%;padding:22px 18px 18px;display:flex;flex-direction:column;justify-content:center;min-height:min(560px,calc(100dvh - 120px))}
+  .rtop{margin-bottom:28px}
+  .recbtn{width:148px;height:148px}
+  .recbtn svg{width:48px;height:48px}.recbtn .sq{width:40px;height:40px;border-radius:9px}.recbtn .ring{width:46px;height:46px}
+  .timer{font-size:34px}
+  .status{margin-top:26px;font-size:15px}
+  #viewRecord .drop{display:none}
+  .uplink{display:block}
+  .btn{height:44px;padding:0 16px;font-size:14.5px}
+  .res-head{padding:18px 16px 16px}
+  .dls{width:100%}
+  .dls .btn.primary{flex:1 1 100%;justify-content:center}
+  .seg-row{padding:12px 10px}
+  .seg-row .ts{font-size:13.5px;padding:6px 0}
+  .seg-row .cp{padding:8px 0}
+  .play{width:48px;height:48px}
+  section{margin:28px 0}
+}
 @media (max-width:760px){.hero{grid-template-columns:1fr;padding-top:40px}h1{font-size:36px}.seg-row{grid-template-columns:1fr;gap:4px}.seg-row .cp{opacity:1;justify-self:start}.recorder{padding:24px 18px 20px}.stage{padding:32px 12px}}
 @media (max-width:520px){.seg{display:none}.pillselect{display:inline-block}.player{padding:12px 16px}.tools,.res-head{padding-left:16px;padding-right:16px}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
@@ -175,8 +273,15 @@ mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
 <body>
 <div class="wrap">
 <header>
-  <div class="brand" aria-label="Prata"><i aria-hidden="true"><b style="height:8px"></b><b style="height:16px"></b><b style="height:11px"></b><b style="height:18px"></b><b style="height:7px"></b></i>Prata</div>
+  <a class="brand" href="#/" aria-label="Prata – spela in"><i aria-hidden="true"><b style="height:8px"></b><b style="height:16px"></b><b style="height:11px"></b><b style="height:18px"></b><b style="height:7px"></b></i>Prata</a>
+  <nav class="tabs" aria-label="Vyer">
+    <a href="#/" id="tabRec" aria-current="page">Spela in</a>
+    <a href="#/notes" id="tabNotes">Anteckningar <span class="count" id="noteCount" aria-label="antal anteckningar"></span></a>
+  </nav>
 </header>
+
+<main>
+<div class="view" id="viewRecord">
 
 <div class="hero">
   <div>
@@ -186,7 +291,6 @@ mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
   <p class="lede">Spela in direkt eller släpp en ljudfil. Transkriberingen körs lokalt – inget ljud lämnar datorn.</p>
 </div>
 
-<main>
 <div class="stage">
   <div class="recorder">
     <div class="rtop" id="modelBox">
@@ -219,6 +323,7 @@ mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
     <div class="meter hidden" id="meter" aria-hidden="true"><div id="level"></div></div>
     <div class="err hidden" id="recErr" role="alert"></div>
 
+    <button type="button" class="uplink" id="uplink">eller <u>välj en ljudfil</u></button>
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="Välj en ljudfil eller dra och släpp den här">
       <div class="grow">
         <svg class="dicon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
@@ -244,17 +349,41 @@ mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
   </div>
 </section>
 
-<section aria-label="Transkription">
-  <div class="card empty" id="empty">Ingen transkription än. Spela in eller släpp en fil ovan så visas texten här.</div>
+<section id="recentSec" class="hidden" aria-labelledby="recentH">
+  <div class="recent-head"><h3 id="recentH">Senaste anteckningar</h3><a href="#/notes">Visa alla</a></div>
+  <div class="note-list" id="recentList"></div>
+</section>
+</div><!-- /viewRecord -->
+
+<div class="view hidden" id="viewNotes">
+  <div class="notes-layout" id="notesLayout">
+    <aside class="list-pane" aria-label="Alla anteckningar">
+      <div class="list-head"><h2>Anteckningar</h2><span class="meta" id="listMeta"></span></div>
+      <label class="search big"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span class="sr-only">Sök i alla anteckningar</span><input type="search" id="noteSearch" placeholder="Sök i alla anteckningar" autocomplete="off" enterkeyhint="search"></label>
+      <div class="note-list" id="noteList" aria-live="polite"></div>
+    </aside>
+    <div class="note-pane">
+      <div class="card empty" id="notePlaceholder">Välj en anteckning i listan för att läsa, lyssna och ladda ner.</div>
   <div class="card hidden" id="resultCard">
     <div class="res-head">
-      <div style="min-width:0"><h2 id="resTitle"></h2><div class="meta" id="meta"></div></div>
+      <div style="min-width:0;flex:1 1 320px">
+        <a class="back" href="#/notes" id="backBtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Anteckningar</a>
+        <div class="title-row" id="titleRow"><h2 id="resTitle" title="Tryck för att byta namn"></h2>
+          <button type="button" class="icon-btn" id="renameBtn" aria-label="Byt namn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button></div>
+        <form class="rename hidden" id="renameForm" autocomplete="off">
+          <label class="sr-only" for="renameInput">Nytt namn</label><input id="renameInput" maxlength="200" enterkeyhint="done">
+          <button type="submit" class="btn primary">Spara</button><button type="button" class="btn" id="renameCancel">Avbryt</button>
+        </form>
+        <div class="meta" id="meta"></div>
+      </div>
       <div class="dls">
         <button type="button" class="btn primary" id="copy">Kopiera text</button>
         <a class="btn" id="dlTxt" download>.txt</a>
         <a class="btn" id="dlTxtTs" download>.txt <small>med tider</small></a>
         <a class="btn" id="dlSrt" download>.srt</a>
         <a class="btn" id="dlJson" download>.json</a>
+        <button type="button" class="btn danger" id="delBtn">Radera</button>
       </div>
     </div>
     <div class="player" id="playerBar">
@@ -274,15 +403,27 @@ mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
     </div>
     <div class="segs" id="segs"></div>
   </div>
-</section>
+
+    </div>
+  </div>
+</div><!-- /viewNotes -->
 </main>
 <div style="height:40px"></div>
 </div>
+<dialog id="confirmDlg" aria-labelledby="dlgH">
+  <form method="dialog" class="dlg">
+    <h4 id="dlgH">Radera anteckningen?</h4>
+    <p id="dlgText">Texten och ljudet tas bort permanent från datorn.</p>
+    <div class="row"><button class="btn" value="cancel" id="dlgCancel">Avbryt</button><button class="btn dangerfill" value="ok" id="dlgOk">Radera</button></div>
+  </form>
+</dialog>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 let hideProcT = null;
 let file = null, jobId = null, timer = null, lastJob = null, lastMedia = null, busy = false;
+let curNote = null;                 // note shown in the note pane
+const localBlobs = new Map();       // note id -> recorded/uploaded blob (this session; for the waveform)
 const STATUS = { uploading: "Laddar upp …", queued: "I kö …", converting: "Konverterar ljud …", running: "Transkriberar …", done: "Klar", error: "Något gick fel" };
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const pad = n => String(n).padStart(2, "0");
@@ -343,13 +484,21 @@ function pick(f) {
 const drop = $("drop");
 drop.onclick = e => { if (e.target.closest("#go")) return; $("file").click(); };
 drop.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target === drop) { e.preventDefault(); $("file").click(); } };
-$("file").onchange = e => { pick(e.target.files[0]); e.target.value = ""; };
+$("file").onchange = e => {
+  const f = e.target.files[0], direct = e.target.dataset.direct === "1";
+  delete e.target.dataset.direct; e.target.value = "";
+  if (!f) return;
+  if (direct) { if (!busy) startJob(f, f.name); } else pick(f);
+};
 ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); if (!drop.classList.contains("is-off")) drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
 drop.addEventListener("drop", e => { if (!drop.classList.contains("is-off") && e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
 $("go").onclick = e => { e.stopPropagation(); if (file && !busy) { const f = file; pick(null); $("recTime").textContent = "00:00"; startJob(f, f.name); } };
+// phone layout: a plain link instead of the drop zone; the file is sent right away
+$("uplink").onclick = () => { if (!busy) { $("file").dataset.direct = "1"; $("file").click(); } };
 
 // ------------------------------------------------------------ recorder UI state
+const phoneQ = window.matchMedia("(max-width: 640px)");
 function setRecState(state, extra) {   // idle | recording | processing | done
   const btn = $("rec"), st = $("recStatus");
   btn.classList.toggle("on", state === "recording");
@@ -361,12 +510,13 @@ function setRecState(state, extra) {   // idle | recording | processing | done
   $("modelBox").classList.toggle("is-off", off);
   segBtns.forEach(b => b.disabled = off); $("model").disabled = off;
   drop.classList.toggle("is-off", off); drop.setAttribute("aria-disabled", String(off)); drop.tabIndex = off ? -1 : 0;
+  $("uplink").classList.toggle("is-off", off); $("uplink").disabled = off;
   $("go").disabled = off || !file;
   st.classList.toggle("idle", state === "idle");
   if (state === "recording") st.innerHTML = '<span class="live">Spelar in</span><span aria-hidden="true">·</span><span>Tryck för att stoppa och transkribera</span>';
-  else if (state === "processing") st.textContent = "Transkriberar …";
+  else if (state === "processing") st.textContent = extra || "Transkriberar …";
   else if (state === "done") st.textContent = extra;
-  else st.textContent = "Tryck för att spela in · eller släpp en fil nedan";
+  else st.textContent = phoneQ.matches ? "Tryck för att spela in" : "Tryck för att spela in · eller släpp en fil nedan";
   $("wave").classList.toggle("frozen", state === "processing");
   if (state === "idle" || state === "done") { hist = []; drawWave(); }
 }
@@ -409,7 +559,7 @@ async function startJob(blob, filename) {
   clearInterval(timer); clearTimeout(hideProcT);
   busy = true; lastMedia = { blob, filename }; curPct = null;
   setRecState("processing");
-  $("resultCard").classList.add("hidden"); $("empty").classList.add("hidden");
+  go("#/");
   $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
   $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
   $("statusText").textContent = STATUS.uploading; $("procFile").textContent = filename;
@@ -419,7 +569,9 @@ async function startJob(blob, filename) {
     const r = await fetch("/api/jobs", { method: "POST", body: fd });
     let j = {}; try { j = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(j.error || r.status + " " + r.statusText);
-    jobId = j.id; poll(); timer = setInterval(poll, 1500);
+    jobId = j.id; localBlobs.set(j.id, blob);
+    try { localStorage.setItem("prata.job", j.id); } catch (_) {}
+    poll(); timer = setInterval(poll, 1500);
   } catch (e) { jobFailed("Uppladdningen misslyckades.", "Kontrollera att Prata fortfarande körs och försök igen."); }
 }
 
@@ -438,14 +590,22 @@ function jobFailed(lead, text) {
   $("err").innerHTML = `<b>${esc(lead)}</b><span>${esc(text)}</span>`;
   $("errBox").classList.remove("hidden");
   setRecState("idle");
-  if (!lastJob) $("empty").classList.remove("hidden");
+  try { localStorage.removeItem("prata.job"); } catch (_) {}
 }
 $("retry").onclick = () => { if (lastMedia && !busy) startJob(lastMedia.blob, lastMedia.filename); };
 
 async function poll() {
+  if (!jobId) return;
   let j;
   try { const r = await fetch("/api/jobs/" + jobId); j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); }
-  catch (e) { $("conn").classList.remove("hidden"); return; }
+  catch (e) {
+    if (e && /okänt jobb|404/.test(e.message)) {   // server restarted: the job is gone
+      clearInterval(timer); busy = false; setRecState("idle"); $("statusSec").classList.add("hidden");
+      try { localStorage.removeItem("prata.job"); } catch (_) {}
+      refreshNotes(); return;
+    }
+    $("conn").classList.remove("hidden"); return;
+  }
   $("conn").classList.add("hidden");
   if (j.status === "error") return jobFailed("Transkriberingen misslyckades.", humanError(j.error));
   curPct = progressPct(j);
@@ -453,32 +613,52 @@ async function poll() {
   $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
   $("elapsed").textContent = `${Math.round(j.elapsed_s)} s · ${j.model}`;
   setSteps(j.status); setBar(curPct);
+  if (busy && j.status !== "done") setRecState("processing", (STATUS[j.status] || "Transkriberar …") + (curPct != null ? " " + curPct + " %" : ""));
   if (j.status === "done") {
     clearInterval(timer); busy = false;
+    try { localStorage.removeItem("prata.job"); } catch (_) {}
     $("statusCard").classList.add("done"); $("spin").classList.add("hidden");
     setRecState("done", `Klar · ${dec1(j.elapsed_s)} s för ${fmtShort(j.audio_duration)} ljud`);
     flashDone();
-    render(j);
     hideProcT = setTimeout(() => { if (!busy) $("statusSec").classList.add("hidden"); }, 1200);
-    $("resultCard").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    await refreshNotes();
+    if (j.note_id) go("#/notes/" + j.note_id);           // lands in Notes and opens
+    else { lastJob = j; showJobResult(j); }
   }
 }
 function flashDone() { const b = $("rec"); b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 600); }
 
 // ------------------------------------------------------------ result / transcript
 let segData = [], activeIdx = -1, markEls = [], markIdx = -1;
-function render(j) {
-  lastJob = j; segData = j.segments || []; activeIdx = -1;
-  $("resTitle").textContent = j.filename.replace(/\.[^.]+$/, "");
-  $("resTitle").title = j.filename;
-  const words = (j.segments || []).reduce((n, s) => n + (s.text.trim() ? s.text.trim().split(/\s+/).length : 0), 0);
-  $("meta").textContent = [fmtShort(j.audio_duration) + " ljud", words + " ord", "modell " + j.model].join(" · ");
-  const base = `/api/jobs/${j.id}/`, stem = j.filename.replace(/\.[^.]+$/, "");
+function safeStem(t) { return (t || "transkript").replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, "-").trim() || "transkript"; }
+function wordCount(segs) { return (segs || []).reduce((n, s) => n + (s.text.trim() ? s.text.trim().split(/\s+/).length : 0), 0); }
+// note: {id,title,created,model,audio_duration,segments,text,has_audio,audio_bytes}
+function render(n, q) {
+  curNote = n; lastJob = n; segData = n.segments || []; activeIdx = -1;
+  $("resTitle").textContent = n.title; $("resTitle").title = "Tryck för att byta namn";
+  closeRename();
+  $("meta").textContent = [DATED.test(n.title) ? "" : fmtDate(n.created), fmtShort(n.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + n.model].filter(Boolean).join(" · ");
+  const base = `/api/notes/${n.id}/`, stem = safeStem(n.title);
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
+  $("delBtn").classList.remove("hidden"); $("renameBtn").classList.remove("hidden");
+  $("search").value = q || ""; renderSegs(q || "");
+  $("resultCard").classList.remove("hidden"); $("notePlaceholder").classList.add("hidden");
+  loadMedia(n.has_audio ? base + "audio" : null, localBlobs.get(n.id), n.audio_bytes, n.audio_duration);
+}
+// fallback when a job finished but the note could not be saved: show it from the job
+function showJobResult(j) {
+  go("#/notes/"); curNote = null; segData = j.segments || []; activeIdx = -1;
+  $("resTitle").textContent = j.filename.replace(/\.[^.]+$/, ""); closeRename();
+  $("meta").textContent = [fmtShort(j.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + j.model, "inte sparad"].join(" · ");
+  const base = `/api/jobs/${j.id}/`, stem = safeStem(j.filename.replace(/\.[^.]+$/, ""));
+  [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
+    .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
+  $("delBtn").classList.add("hidden"); $("renameBtn").classList.add("hidden");
   $("search").value = ""; renderSegs("");
-  $("resultCard").classList.remove("hidden"); $("empty").classList.add("hidden");
-  loadMedia(lastMedia && lastMedia.blob, j.audio_duration);
+  $("notesLayout").classList.add("has-note");
+  $("resultCard").classList.remove("hidden"); $("notePlaceholder").classList.add("hidden");
+  loadMedia(null, lastMedia && lastMedia.blob, 0, j.audio_duration);
 }
 
 function highlight(text, q) {
@@ -565,18 +745,24 @@ function drawScrub() {
   scrub.setAttribute("aria-valuemax", Math.round(d)); scrub.setAttribute("aria-valuenow", Math.round(audio.currentTime));
   scrub.setAttribute("aria-valuetext", `${fmtShort(audio.currentTime)} av ${fmtShort(d)}`);
 }
-async function loadMedia(blob, jobDur) {
+// url: server audio (Range-capable, used for playback); blob: local copy for the waveform
+async function loadMedia(url, blob, bytes, noteDur) {
   const token = ++decodeToken;
   audio.pause();
-  if (mediaUrl) { audio.removeAttribute("src"); audio.load(); URL.revokeObjectURL(mediaUrl); mediaUrl = null; }
-  peaks = null; mediaDur = jobDur || 0;
-  $("playerBar").classList.toggle("hidden", !blob); $("noAudio").classList.toggle("hidden", !!blob);
-  if (!blob) return;
-  mediaUrl = URL.createObjectURL(blob); audio.src = mediaUrl; audio.load();
+  if (mediaUrl) { URL.revokeObjectURL(mediaUrl); mediaUrl = null; }
+  audio.removeAttribute("src"); audio.load();
+  peaks = null; mediaDur = noteDur || 0;
+  const src = url || (blob ? (mediaUrl = URL.createObjectURL(blob)) : null);
+  $("playerBar").classList.toggle("hidden", !src); $("noAudio").classList.toggle("hidden", !!src);
+  if (!src) return;
+  audio.src = src; audio.load();   // preload=metadata; never autoplays
   scrub.classList.remove("hidden"); audio.classList.add("hidden"); audio.controls = false;
   drawScrub();
-  if (blob.size > 200 * 1048576) return;          // too big to decode in the browser → progress bar
   try {
+    if (!blob && url && bytes && bytes <= 25 * 1048576) {
+      const r = await fetch(url); if (!r.ok) throw new Error(r.status); blob = await r.blob();
+    }
+    if (!blob || blob.size > 200 * 1048576 || token !== decodeToken) { drawScrub(); return; }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) throw new Error("no AudioContext");
     const ac = new AC(), buf = await blob.arrayBuffer();
     const ab = await new Promise((res, rej) => { const p = ac.decodeAudioData(buf, res, rej); if (p && p.then) p.then(res, rej); });
@@ -590,9 +776,9 @@ async function loadMedia(blob, jobDur) {
       out[i] = p; if (p > max) max = p;
     }
     for (let i = 0; i < N; i++) out[i] = max ? Math.pow(out[i] / max, 0.8) : 0;
-    peaks = out; if (!mediaDur) mediaDur = ab.duration; else mediaDur = ab.duration || mediaDur;
-  } catch (e) { peaks = null; }   // can't decode → plain progress bar
-  drawScrub();
+    peaks = out; mediaDur = ab.duration || mediaDur;
+  } catch (e) { if (token === decodeToken) peaks = null; }   // can't decode → plain progress bar
+  if (token === decodeToken) drawScrub();
 }
 audio.addEventListener("error", () => {
   if (!audio.src) return;
@@ -671,16 +857,20 @@ function recError(lead, rest) {
   if (!lead) { el.classList.add("hidden"); el.innerHTML = ""; return; }
   el.innerHTML = `<b>${esc(lead)}</b><span>${esc(rest || "")}</span>`; el.classList.remove("hidden");
 }
+// Prefer a format this browser can also play back (the note keeps the original audio).
+// iOS Safari records audio/mp4 (AAC); Chrome/Firefox record WebM/Opus.
 function pickMime() {
   if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
-  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"])
-    if (MediaRecorder.isTypeSupported(t)) return t;
-  return "";
+  const cands = ["audio/webm;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus", "audio/aac"];
+  const ok = cands.filter(t => { try { return MediaRecorder.isTypeSupported(t); } catch (_) { return false; } });
+  const a = document.createElement("audio");
+  return ok.find(t => a.canPlayType(t.split(";")[0]) !== "") || ok[0] || "";
 }
 function extFor(mime) {
   mime = (mime || "").toLowerCase();
   if (mime.includes("webm")) return "webm";
-  if (mime.includes("mp4") || mime.includes("aac") || mime.includes("m4a")) return "m4a";
+  if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
+  if (mime.includes("aac")) return "aac";
   if (mime.includes("ogg")) return "ogg";
   if (mime.includes("wav")) return "wav";
   return "webm";
@@ -694,12 +884,19 @@ function stopMeter() {
   if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
   $("level").style.width = "0";
 }
+// iOS: an AudioContext must be created/resumed synchronously inside the tap.
+function primeAudioCtx() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC || audioCtx) return;
+  try { audioCtx = new AC(); if (audioCtx.resume) audioCtx.resume().catch(() => {}); } catch (_) { audioCtx = null; }
+}
 function startMeter(stream) {
   hist = []; lastPush = 0;
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) { $("meter").classList.remove("hidden"); $("wave").classList.add("hidden"); return; }
   try {
-    audioCtx = new AC(); if (audioCtx.resume) audioCtx.resume().catch(() => {});
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === "suspended" && audioCtx.resume) audioCtx.resume().catch(() => {});
     const an = audioCtx.createAnalyser(); an.fftSize = 1024;
     audioCtx.createMediaStreamSource(stream).connect(an);
     const buf = new Float32Array(an.fftSize);
@@ -724,12 +921,13 @@ function releaseMic() {
 }
 async function startRecording() {
   recError("");
-  if (!window.isSecureContext) return recError("Mikrofonen kräver en säker anslutning.", "Öppna sidan via http://127.0.0.1 eller localhost – eller ladda upp en fil i stället.");
+  if (!window.isSecureContext) return recError("Mikrofonen kräver en säker anslutning.", "Öppna Prata via https (t.ex. Tailscale) eller localhost på datorn – eller ladda upp en fil i stället.");
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined")
     return recError("Inspelning stöds inte i den här webbläsaren.", "getUserMedia/MediaRecorder saknas. Prova en aktuell Chrome, Firefox, Edge eller Safari – eller ladda upp en fil.");
   try {
-    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } });
   } catch (e) {
+    stopMeter();
     const n = e && e.name;
     if (n === "NotAllowedError" || n === "SecurityError") recError("Mikrofonen nekades.", "Tillåt mikrofonen för den här sidan i webbläsarens inställningar och försök igen – eller ladda upp en fil i stället.");
     else if (n === "NotFoundError" || n === "OverconstrainedError") recError("Ingen mikrofon hittades.", "Anslut en mikrofon och försök igen.");
@@ -745,8 +943,8 @@ async function startRecording() {
   rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
   rec.onerror = e => { releaseMic(); setRecState("idle"); recError("Inspelningsfel.", (e.error && e.error.message) || "okänt fel"); };
   rec.onstop = () => {
-    releaseMic();
     const type = rec.mimeType || mime || (recChunks[0] && recChunks[0].type) || "audio/webm";
+    releaseMic(); rec = null;
     const blob = new Blob(recChunks, { type });
     if (!blob.size) { setRecState("idle"); return recError("Inspelningen blev tom.", "Inget ljud fångades – kontrollera mikrofonen."); }
     const name = `inspelning-${stamp()}.${extFor(type)}`;
@@ -758,7 +956,10 @@ async function startRecording() {
   setRecState("recording");
   startMeter(recStream);
 }
-$("rec").onclick = () => { if (rec && rec.state === "recording") rec.stop(); else if (!busy) startRecording(); };
+$("rec").onclick = () => {
+  if (rec && rec.state === "recording") rec.stop();
+  else if (!busy) { primeAudioCtx(); startRecording(); }   // getUserMedia is the first await → still inside the tap
+};
 document.addEventListener("keydown", e => {   // Space toggles recording when focus isn't in a control
   if (e.code !== "Space" || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target.closest("input,textarea,select,button,a,[role=button],[role=slider],summary,[contenteditable]")) return;
@@ -766,16 +967,189 @@ document.addEventListener("keydown", e => {   // Space toggles recording when fo
   e.preventDefault(); $("rec").click();
 });
 
+// ------------------------------------------------------------ notes: list, search, open, rename, delete
+let notesCache = [], notesTotal = 0, searchT = null, listToken = 0;
+function fmtDate(sec) {
+  const d = new Date(sec * 1000), now = new Date();
+  const o = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  if (d.getFullYear() !== now.getFullYear()) o.year = "numeric";
+  return d.toLocaleString("sv-SE", o);
+}
+function hlTerms(text, q) {
+  const terms = (q || "").trim().toLocaleLowerCase("sv").split(/\s+/).filter(Boolean);
+  if (!terms.length) return esc(text);
+  const lt = text.toLocaleLowerCase("sv"); if (lt.length !== text.length) return esc(text);
+  const marks = new Array(text.length).fill(false);
+  for (const t of terms) { let k = 0; while ((k = lt.indexOf(t, k)) !== -1) { for (let i = k; i < k + t.length; i++) marks[i] = true; k += t.length; } }
+  let out = "", on = false;
+  for (let i = 0; i < text.length; i++) {
+    if (marks[i] !== on) { out += marks[i] ? "<mark>" : "</mark>"; on = marks[i]; }
+    out += esc(text[i]);
+  }
+  return out + (on ? "</mark>" : "");
+}
+const DATED = /^\d{1,2} [a-zåäö]{3} \d{4} \d{2}:\d{2}/;   // default titles already start with the date
+// --- day-grouping:start (pure functions; also unit-tested by scripts/test-ui.mjs)
+const SV_MONTHS = ["januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti", "september", "oktober", "november", "december"];
+// local calendar day of a unix timestamp (browser time zone)
+function dayKey(sec) { const d = new Date(sec * 1000); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+// "Idag" | "Igår" | "28 september" | "28 september 2025"
+function dayLabel(sec, now) {
+  now = now || new Date();
+  const d = new Date(sec * 1000), k = dayKey(sec);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);   // DST-safe
+  if (k === dayKey(today / 1000)) return "Idag";
+  if (k === dayKey(yest / 1000)) return "Igår";
+  return d.getDate() + " " + SV_MONTHS[d.getMonth()] + (d.getFullYear() !== now.getFullYear() ? " " + d.getFullYear() : "");
+}
+function clockTime(sec) { const d = new Date(sec * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+// notes (any order) -> [{label, notes}] with days newest first and notes newest first within a day
+function groupByDay(notes, now) {
+  const sorted = notes.slice().sort((a, b) => b.created - a.created || (a.id < b.id ? 1 : -1));
+  const out = [];
+  for (const n of sorted) {
+    const k = dayKey(n.created), last = out[out.length - 1];
+    if (last && last.key === k) last.notes.push(n);
+    else out.push({ key: k, label: dayLabel(n.created, now), notes: [n] });
+  }
+  return out;
+}
+// --- day-grouping:end
+function noteItem(n, q, current, withDay) {
+  const meta = [withDay ? dayLabel(n.created) + " " + clockTime(n.created) : clockTime(n.created), fmtShort(n.audio_duration), n.words + " ord"].join(" · ");
+  return `<a class="note-item" href="#/notes/${esc(n.id)}" data-id="${esc(n.id)}"${current ? ' aria-current="true"' : ""}>` +
+    `<div class="ni-title">${hlTerms(n.title, q)}</div><div class="ni-meta">${esc(meta)}</div>` +
+    (n.snippet ? `<div class="ni-snip">${hlTerms(n.snippet, q)}</div>` : "") + `</a>`;
+}
+function renderList() {
+  const q = $("noteSearch").value.trim(), cur = curNote && curNote.id;
+  const el = $("noteList");
+  if (!notesCache.length) {
+    el.innerHTML = `<div class="list-empty">${q ? "Inga anteckningar matchar sökningen." : "Inga anteckningar än. Spela in eller ladda upp en fil – resultatet sparas här automatiskt."}</div>`;
+  } else el.innerHTML = groupByDay(notesCache).map(g =>
+    `<h3 class="day-h">${esc(g.label)}</h3>` + g.notes.map(n => noteItem(n, q, n.id === cur)).join("")).join("");
+  $("listMeta").textContent = q ? `${notesCache.length} av ${notesTotal}` : (notesTotal ? notesTotal + " st" : "");
+  $("noteCount").textContent = notesTotal || ""; $("noteCount").classList.toggle("hidden", !notesTotal);
+}
+async function refreshNotes() {
+  const token = ++listToken, q = $("noteSearch").value.trim();
+  try {
+    const r = await fetch("/api/notes" + (q ? "?q=" + encodeURIComponent(q) : ""));
+    const j = await r.json(); if (token !== listToken) return;
+    notesCache = j.notes || []; notesTotal = j.total || 0;
+  } catch (_) { return; }
+  renderList();
+  if (!q) {   // recent notes on the record view
+    const rec = notesCache.slice(0, 3);
+    $("recentSec").classList.toggle("hidden", !rec.length);
+    $("recentList").innerHTML = rec.map(n => noteItem(n, "", false, true)).join("");
+  }
+}
+$("noteSearch").addEventListener("input", () => { clearTimeout(searchT); searchT = setTimeout(refreshNotes, 180); });
+$("noteSearch").addEventListener("keydown", e => { if (e.key === "Escape") { e.target.value = ""; refreshNotes(); } });
+
+async function openNote(id) {
+  if (curNote && curNote.id === id && !$("resultCard").classList.contains("hidden")) return;
+  try {
+    const r = await fetch("/api/notes/" + encodeURIComponent(id));
+    if (!r.ok) throw new Error(r.status);
+    const n = await r.json();
+    render(n, $("noteSearch").value.trim());
+    renderList();
+  } catch (e) {
+    curNote = null; $("resultCard").classList.add("hidden");
+    $("notePlaceholder").textContent = "Anteckningen finns inte längre."; $("notePlaceholder").classList.remove("hidden");
+  }
+}
+
+// rename (tap the title or the pencil)
+function openRename() {
+  if (!curNote) return;
+  $("renameInput").value = curNote.title;
+  $("titleRow").classList.add("hidden"); $("renameForm").classList.remove("hidden");
+  $("renameInput").focus(); $("renameInput").select();
+}
+function closeRename() { $("renameForm").classList.add("hidden"); $("titleRow").classList.remove("hidden"); }
+$("renameBtn").onclick = openRename;
+$("resTitle").onclick = () => { if (curNote) openRename(); };
+$("renameCancel").onclick = closeRename;
+$("renameInput").addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); closeRename(); } });
+$("renameForm").onsubmit = async e => {
+  e.preventDefault();
+  const title = $("renameInput").value.trim();
+  if (!curNote || !title) return closeRename();
+  try {
+    const r = await fetch("/api/notes/" + curNote.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error);
+    curNote.title = j.title; $("resTitle").textContent = j.title;
+    const stem = safeStem(j.title);
+    [["dlTxt", ".txt"], ["dlTxtTs", "-tider.txt"], ["dlSrt", ".srt"], ["dlJson", ".json"]].forEach(([id, ext]) => $(id).setAttribute("download", stem + ext));
+    closeRename(); refreshNotes();
+  } catch (err) { $("renameInput").setCustomValidity("Kunde inte spara namnet"); $("renameInput").reportValidity(); setTimeout(() => $("renameInput").setCustomValidity(""), 2000); }
+};
+
+// delete with confirmation
+$("delBtn").onclick = () => {
+  if (!curNote) return;
+  $("dlgText").textContent = `”${curNote.title}” – texten och ljudet tas bort permanent från datorn.`;
+  const d = $("confirmDlg");
+  if (d.showModal) d.showModal(); else if (confirm("Radera anteckningen? Texten och ljudet tas bort permanent.")) doDelete();
+};
+$("confirmDlg").addEventListener("close", () => { if ($("confirmDlg").returnValue === "ok") doDelete(); });
+async function doDelete() {
+  const id = curNote && curNote.id; if (!id) return;
+  try {
+    const r = await fetch("/api/notes/" + id, { method: "DELETE" });
+    if (!r.ok && r.status !== 404) throw new Error(r.status);
+  } catch (e) { alert("Kunde inte radera anteckningen."); return; }
+  localBlobs.delete(id); audio.pause(); curNote = null;
+  $("resultCard").classList.add("hidden");
+  await refreshNotes();
+  go("#/notes");
+}
+
+// ------------------------------------------------------------ views (hash routes: #/  #/notes  #/notes/<id>)
+function go(h) { if (location.hash !== h) location.hash = h; else route(); }
+function route() {
+  const h = location.hash || "#/", m = /^#\/notes\/([a-z0-9-]+)$/.exec(h), notes = h.startsWith("#/notes");
+  $("viewRecord").classList.toggle("hidden", notes); $("viewNotes").classList.toggle("hidden", !notes);
+  $("tabRec").toggleAttribute("aria-current", !notes); $("tabNotes").toggleAttribute("aria-current", notes);
+  if (!notes) { $("tabRec").setAttribute("aria-current", "page"); audio.pause(); drawWave(); return; }
+  $("tabNotes").setAttribute("aria-current", "page");
+  $("notesLayout").classList.toggle("has-note", !!m);
+  if (m) { openNote(m[1]); window.scrollTo(0, 0); }
+  else {
+    if (curNote && innerWidth >= 980) { /* keep the open note visible on desktop */ }
+    else { audio.pause(); }
+    if (!curNote) { $("resultCard").classList.add("hidden"); $("notePlaceholder").textContent = "Välj en anteckning i listan för att läsa, lyssna och ladda ner."; $("notePlaceholder").classList.remove("hidden"); }
+  }
+  renderList(); setTimeout(drawScrub, 0);
+}
+window.addEventListener("hashchange", route);
+
 // ------------------------------------------------------------ init
 if (!recSupported) {
   $("rec").disabled = true;
-  if (!window.isSecureContext) recError("Mikrofonen kräver en säker anslutning.", "Öppna sidan via http://127.0.0.1 eller localhost – eller ladda upp en fil i stället.");
+  if (!window.isSecureContext) recError("Mikrofonen kräver en säker anslutning.", "Öppna Prata via https (t.ex. Tailscale) eller localhost på datorn – eller ladda upp en fil i stället.");
   else recError("Inspelning stöds inte i den här webbläsaren.", "getUserMedia/MediaRecorder saknas. Prova en aktuell Chrome, Firefox, Edge eller Safari – eller ladda upp en fil.");
 }
 let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { drawWave(); drawScrub(); }, 60); });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawWave(); drawScrub(); });
 drawWave();
 loadInfo();
+route();
+refreshNotes();
+if (!busy && !(rec && rec.state === "recording")) setRecState("idle");
+// a transcription that was still running when the page was closed/reloaded
+try {
+  const pending = localStorage.getItem("prata.job");
+  if (pending) {
+    jobId = pending; busy = true; setRecState("processing");
+    $("statusSec").classList.remove("hidden"); $("procFile").textContent = ""; setSteps("queued"); setBar(null);
+    poll(); timer = setInterval(poll, 1500);
+  }
+} catch (_) {}
 </script>
 </body>
 </html>

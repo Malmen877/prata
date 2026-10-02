@@ -5,6 +5,9 @@
 //!   * `python` – the Python fallback transcribe.py ($PRATA_PYTHON_SCRIPT)
 //!
 //! Job model: POST /api/jobs (multipart) -> {id}; GET /api/jobs/{id} polls status.
+//! Every finished job is saved as a note (see `notes.rs`): /api/notes…
+
+mod notes;
 
 use std::{
     collections::HashMap,
@@ -16,13 +19,16 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, Path as AxPath, State},
-    http::{header, StatusCode},
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Path as AxPath, Query, Request, State},
+    http::{header, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use notes::{Note, Segment, Store};
+use serde::{Deserialize, Serialize};
+use tower::ServiceExt;
 use tokio::{
     io::{AsyncReadExt, BufReader},
     process::Command,
@@ -30,6 +36,12 @@ use tokio::{
 };
 
 const INDEX_HTML: &str = include_str!("index.html");
+const MANIFEST: &str = include_str!("assets/manifest.webmanifest");
+const ICON_SVG: &str = include_str!("assets/icon.svg");
+const ICON_180: &[u8] = include_bytes!("assets/apple-touch-icon.png");
+const ICON_192: &[u8] = include_bytes!("assets/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("assets/icon-512.png");
+const ICON_MASKABLE: &[u8] = include_bytes!("assets/icon-maskable-512.png");
 
 // ---------------------------------------------------------------- config
 
@@ -44,6 +56,7 @@ struct Config {
     python_script: Option<PathBuf>,
     default_model: String,
     work_dir: PathBuf,
+    notes_dir: PathBuf,
     max_upload_mb: usize,
 }
 
@@ -92,7 +105,7 @@ impl Config {
         });
         Config {
             port: env("WEB_PORT").or_else(|| env("PORT")).and_then(|p| p.parse().ok()).unwrap_or(8795),
-            host: env("WEB_HOST").unwrap_or_else(|| "127.0.0.1".into()),
+            host: env("WEB_HOST").or_else(|| env("HOST")).unwrap_or_else(|| "127.0.0.1".into()),
             backend: env("BACKEND").unwrap_or_else(|| "auto".into()).to_lowercase(),
             prata_bin,
             prata_args: env("ARGS"),
@@ -102,9 +115,57 @@ impl Config {
             work_dir: env("WORK_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| std::env::temp_dir().join("prata-web")),
+            notes_dir: env("NOTES_DIR").map(PathBuf::from).unwrap_or_else(default_notes_dir),
             max_upload_mb: env("MAX_UPLOAD_MB").and_then(|v| v.parse().ok()).unwrap_or(1024),
         }
     }
+}
+
+fn default_notes_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".prata")
+        .join("notes")
+}
+
+const USAGE: &str = "prata-web – lokal webbapp för Prata (svensk tal till text)
+
+usage: prata-web [--host ADDR] [--port PORT] [--notes-dir DIR]
+
+  --host ADDR       listen address (default 127.0.0.1; env PRATA_HOST / PRATA_WEB_HOST)
+  --port PORT       listen port (default 8795; env PRATA_WEB_PORT)
+  --notes-dir DIR   where saved notes are kept (default ~/.prata/notes; env PRATA_NOTES_DIR)
+
+All other settings are environment variables, see the README.";
+
+/// Command-line flags override the environment.
+fn apply_args(cfg: &mut Config, args: &[String]) -> Result<()> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let (flag, inline) = match a.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (a.as_str(), None),
+        };
+        let mut val = || inline.clone().or_else(|| it.next().cloned()).ok_or_else(|| anyhow!("{flag} needs a value"));
+        match flag {
+            "--host" => cfg.host = val()?,
+            "--port" => cfg.port = val()?.parse().context("--port")?,
+            "--notes-dir" => cfg.notes_dir = PathBuf::from(val()?),
+            "-h" | "--help" => {
+                println!("{USAGE}");
+                std::process::exit(0);
+            }
+            _ => bail!("unknown argument {a}\n\n{USAGE}"),
+        }
+    }
+    Ok(())
+}
+
+fn is_loopback(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h == "localhost" || h.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
 }
 
 // ---------------------------------------------------------------- prata detection
@@ -218,13 +279,6 @@ fn prata_args(cfg: &Config, info: &PrataInfo, input: &Path, model: &str, out_jso
 }
 
 // ---------------------------------------------------------------- transcript model
-
-#[derive(Clone, Debug, Serialize)]
-struct Segment {
-    start: f64,
-    end: f64,
-    text: String,
-}
 
 fn fmt_ts(t: f64, sep: char) -> String {
     let ms_total = (t.max(0.0) * 1000.0).round() as u64;
@@ -424,6 +478,8 @@ struct Job {
     elapsed_s: f64,
     segments: Vec<Segment>,
     text: Option<String>,
+    /// Saved note (set when the job is done)
+    note_id: Option<String>,
     #[serde(skip)]
     started: Option<Instant>,
 }
@@ -433,6 +489,7 @@ struct AppState {
     prata: Mutex<PrataInfo>,
     jobs: Mutex<HashMap<String, Job>>,
     gate: Semaphore, // one transcription at a time (memory!)
+    notes: Store,
 }
 
 type St = Arc<AppState>;
@@ -620,15 +677,49 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
         };
         let (segs, fmt) = result?;
         let text = to_txt(&segs, false);
+        let _ = tokio::fs::remove_file(&wav).await;
+        // Save as a note (keeps the original audio for playback).
+        let job = st.jobs.lock().await.get(&id).cloned();
+        let note_id = match job {
+            Some(j) => {
+                let created = j.created as i64;
+                let note = Note {
+                    id: id.clone(),
+                    title: notes::default_title(created, &text),
+                    created,
+                    model: j.model.clone(),
+                    audio_duration: dur,
+                    filename: j.filename.clone(),
+                    audio: None,
+                    audio_bytes: 0,
+                    backend: j.backend.clone(),
+                    segments: segs.clone(),
+                };
+                let st2 = st.clone();
+                let input2 = input.clone();
+                match tokio::task::spawn_blocking(move || st2.notes.create(note, Some(&input2))).await {
+                    Ok(Ok(n)) => Some(n.id),
+                    Ok(Err(e)) => {
+                        eprintln!("[job {id}] could not save note: {e:#}");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("[job {id}] could not save note: {e}");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         update(&st, &id, |j| {
             j.segments = segs;
             j.text = Some(text);
             j.output_format = Some(fmt.into());
+            j.note_id = note_id;
             j.status = "done".into();
             j.progress = "Klar".into();
         })
         .await;
-        let _ = tokio::fs::remove_file(&wav).await;
         Ok(())
     }
     .await;
@@ -724,14 +815,7 @@ async fn create_job(State(st): State<St>, mut mp: Multipart) -> Response {
         return err(StatusCode::BAD_REQUEST, "ogiltigt modellnamn");
     }
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-    let ext: String = Path::new(&fname)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("bin")
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .take(8)
-        .collect();
+    let ext = notes::clean_ext(&fname);
     let input = st.cfg.work_dir.join(format!("{id}.{ext}"));
     if let Err(e) = tokio::fs::write(&input, &bytes).await {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("kunde inte spara filen: {e}"));
@@ -753,6 +837,7 @@ async fn create_job(State(st): State<St>, mut mp: Multipart) -> Response {
         elapsed_s: 0.0,
         segments: vec![],
         text: None,
+        note_id: None,
         started: None,
     };
     st.jobs.lock().await.insert(id.clone(), job);
@@ -781,36 +866,40 @@ async fn download(st: &St, id: &str, kind: &str) -> Response {
     if j.status != "done" {
         return err(StatusCode::CONFLICT, "jobbet är inte klart");
     }
-    let stem = Path::new(&j.filename)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("transkript")
+    let stem = Path::new(&j.filename).file_stem().and_then(|s| s.to_str()).unwrap_or("transkript").to_string();
+    let json = serde_json::json!({"segments": j.segments, "text": j.text});
+    transcript_file(&stem, &j.segments, json, kind)
+}
+
+/// A transcript download (`txt`, `txt-ts`, `srt`, `json`) named after `stem`.
+fn transcript_file(stem: &str, segs: &[Segment], json: serde_json::Value, kind: &str) -> Response {
+    // keep å/ä/ö etc. but no characters that are invalid in file names
+    let utf8_stem: String = stem
+        .chars()
+        .map(|c| if "/\\:*?\"<>|".contains(c) || c.is_control() { '-' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let utf8_stem = if utf8_stem.is_empty() { "transkript".to_string() } else { utf8_stem };
+    let ascii: String = utf8_stem
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect::<String>();
-    let utf8_stem = Path::new(&j.filename)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("transkript")
-        .to_string();
+        .collect();
     let (body, ctype, ext) = match kind {
-        "srt" => (to_srt(&j.segments), "application/x-subrip; charset=utf-8", "srt"),
-        "json" => (
-            serde_json::to_string_pretty(&serde_json::json!({"segments": j.segments, "text": j.text})).unwrap(),
-            "application/json",
-            "json",
-        ),
-        "txt-ts" => (to_txt(&j.segments, true), "text/plain; charset=utf-8", "tider.txt"),
-        _ => (to_txt(&j.segments, false), "text/plain; charset=utf-8", "txt"),
+        "srt" => (to_srt(segs), "application/x-subrip; charset=utf-8", "srt"),
+        "json" => (serde_json::to_string_pretty(&json).unwrap(), "application/json", "json"),
+        "txt-ts" => (to_txt(segs, true), "text/plain; charset=utf-8", "tider.txt"),
+        _ => (to_txt(segs, false), "text/plain; charset=utf-8", "txt"),
     };
+    let name = if kind == "txt-ts" { format!("-{ext}") } else { format!(".{ext}") };
     (
         [
             (header::CONTENT_TYPE, ctype.to_string()),
-            (header::CONTENT_DISPOSITION, {
-                let name = if kind == "txt-ts" { format!("-{ext}") } else { format!(".{ext}") };
-                // ASCII fallback + RFC 5987 UTF-8 name (keeps å/ä/ö in the downloaded file name)
-                format!("attachment; filename=\"{stem}{name}\"; filename*=UTF-8''{}{}", pct(&utf8_stem), pct(&name))
-            }),
+            // ASCII fallback + RFC 5987 UTF-8 name (keeps å/ä/ö in the downloaded file name)
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{ascii}{name}\"; filename*=UTF-8''{}{}", pct(&utf8_stem), pct(&name)),
+            ),
         ],
         body,
     )
@@ -840,25 +929,125 @@ async fn dl_json(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
     download(&st, &id, "json").await
 }
 
+// ---------------------------------------------------------------- notes API
+
+#[derive(Deserialize)]
+struct ListQ {
+    q: Option<String>,
+}
+
+async fn list_notes(State(st): State<St>, Query(q): Query<ListQ>) -> Response {
+    let notes = st.notes.list(q.q.as_deref());
+    Json(serde_json::json!({ "notes": notes, "total": st.notes.len() })).into_response()
+}
+
+async fn get_note(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
+    match st.notes.get(&id) {
+        Some(n) => {
+            let text = n.text();
+            let mut v = serde_json::to_value(&n).unwrap();
+            v["text"] = text.into();
+            v["has_audio"] = n.audio.is_some().into();
+            Json(v).into_response()
+        }
+        None => err(StatusCode::NOT_FOUND, "okänd anteckning"),
+    }
+}
+
+#[derive(Deserialize)]
+struct Patch {
+    title: Option<String>,
+}
+
+async fn patch_note(State(st): State<St>, AxPath(id): AxPath<String>, body: Option<Json<Patch>>) -> Response {
+    let Some(Json(p)) = body else { return err(StatusCode::BAD_REQUEST, "förväntade JSON {\"title\": …}") };
+    let Some(title) = p.title else { return err(StatusCode::BAD_REQUEST, "inget att ändra") };
+    let st2 = st.clone();
+    match tokio::task::spawn_blocking(move || st2.notes.rename(&id, &title)).await {
+        Ok(Ok(Some(n))) => Json(serde_json::json!({ "id": n.id, "title": n.title })).into_response(),
+        Ok(Ok(None)) => err(StatusCode::NOT_FOUND, "okänd anteckning"),
+        Ok(Err(e)) if e.to_string().contains("empty title") => err(StatusCode::BAD_REQUEST, "titeln får inte vara tom"),
+        Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("kunde inte spara: {e:#}")),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+async fn delete_note(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
+    let st2 = st.clone();
+    match tokio::task::spawn_blocking(move || st2.notes.delete(&id)).await {
+        Ok(Ok(true)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Ok(false)) => err(StatusCode::NOT_FOUND, "okänd anteckning"),
+        Ok(Err(e)) => err(StatusCode::INTERNAL_SERVER_ERROR, format!("kunde inte radera: {e:#}")),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// The note's original audio, with HTTP Range support (needed by iOS Safari).
+async fn note_audio(State(st): State<St>, AxPath(id): AxPath<String>, req: Request) -> Response {
+    let Some((path, mime)) = st.notes.audio_path(&id) else { return err(StatusCode::NOT_FOUND, "inget ljud") };
+    let svc = tower_http::services::ServeFile::new_with_mime(path, &mime.parse().unwrap());
+    match svc.oneshot(req).await {
+        Ok(r) => {
+            let mut r = r.map(Body::new);
+            r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
+            r
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+async fn note_download(State(st): State<St>, AxPath((id, kind)): AxPath<(String, String)>) -> Response {
+    if !matches!(kind.as_str(), "txt" | "txt-ts" | "srt" | "json") {
+        return err(StatusCode::NOT_FOUND, "okänt format");
+    }
+    let Some(n) = st.notes.get(&id) else { return err(StatusCode::NOT_FOUND, "okänd anteckning") };
+    let json = serde_json::json!({
+        "id": n.id, "title": n.title, "created": n.created, "model": n.model,
+        "audio_duration": n.audio_duration, "filename": n.filename,
+        "segments": n.segments, "text": n.text(),
+    });
+    transcript_file(&n.title, &n.segments, json, &kind)
+}
+
+// ---------------------------------------------------------------- static assets
+
+fn asset(ctype: &'static str, body: impl Into<Body>) -> Response {
+    ([(header::CONTENT_TYPE, ctype), (header::CACHE_CONTROL, "public, max-age=86400")], body.into()).into_response()
+}
+
+async fn manifest() -> Response {
+    asset("application/manifest+json", MANIFEST)
+}
+async fn icon_svg() -> Response {
+    asset("image/svg+xml", ICON_SVG)
+}
+async fn icon_180() -> Response {
+    asset("image/png", ICON_180)
+}
+async fn icon_192() -> Response {
+    asset("image/png", ICON_192)
+}
+async fn icon_512() -> Response {
+    asset("image/png", ICON_512)
+}
+async fn icon_maskable() -> Response {
+    asset("image/png", ICON_MASKABLE)
+}
+
 // ---------------------------------------------------------------- main
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cfg = Config::from_env();
-    tokio::fs::create_dir_all(&cfg.work_dir).await?;
-    let prata = probe_prata(&cfg).await;
-    eprintln!("prata-web config: {cfg:?}");
-    eprintln!("prata probe: path={:?} works={} ({})", prata.path, prata.works, prata.note);
-    let limit = cfg.max_upload_mb * 1024 * 1024;
-    let addr = format!("{}:{}", cfg.host, cfg.port);
-    let st: St = Arc::new(AppState {
-        cfg,
-        prata: Mutex::new(prata),
-        jobs: Mutex::new(HashMap::new()),
-        gate: Semaphore::new(1),
-    });
-    let app = Router::new()
+fn app(st: St) -> Router {
+    let limit = st.cfg.max_upload_mb * 1024 * 1024;
+    Router::new()
         .route("/", get(index))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/icon.svg", get(icon_svg))
+        .route("/favicon.svg", get(icon_svg))
+        .route("/apple-touch-icon.png", get(icon_180))
+        .route("/apple-touch-icon-precomposed.png", get(icon_180))
+        .route("/icon-192.png", get(icon_192))
+        .route("/icon-512.png", get(icon_512))
+        .route("/icon-maskable-512.png", get(icon_maskable))
         .route("/api/info", get(info))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/{id}", get(get_job))
@@ -866,12 +1055,223 @@ async fn main() -> Result<()> {
         .route("/api/jobs/{id}/txt-ts", get(dl_txt_ts))
         .route("/api/jobs/{id}/srt", get(dl_srt))
         .route("/api/jobs/{id}/json", get(dl_json))
+        .route("/api/notes", get(list_notes))
+        .route("/api/notes/{id}", get(get_note).patch(patch_note).delete(delete_note))
+        .route("/api/notes/{id}/audio", get(note_audio))
+        .route("/api/notes/{id}/{kind}", get(note_download))
         .layer(DefaultBodyLimit::max(limit))
-        .with_state(st);
+        .with_state(st)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut cfg = Config::from_env();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Err(e) = apply_args(&mut cfg, &args) {
+        eprintln!("prata-web: {e}");
+        std::process::exit(2);
+    }
+    tokio::fs::create_dir_all(&cfg.work_dir).await?;
+    let store = Store::open(&cfg.notes_dir)?;
+    let prata = probe_prata(&cfg).await;
+    eprintln!("prata-web config: {cfg:?}");
+    eprintln!("prata probe: path={:?} works={} ({})", prata.path, prata.works, prata.note);
+    eprintln!("notes: {} saved in {}", store.len(), store.dir().display());
+    let addr = if cfg.host.contains(':') && !cfg.host.starts_with('[') {
+        format!("[{}]:{}", cfg.host, cfg.port)
+    } else {
+        format!("{}:{}", cfg.host, cfg.port)
+    };
+    if !is_loopback(&cfg.host) {
+        eprintln!(
+            "WARNING: listening on {addr}, not only on this computer. prata-web has no login: \
+             anyone who can reach this address can record, read and delete notes. \
+             For Tailscale, prefer the default 127.0.0.1 with `tailscale serve`."
+        );
+    }
+    let st: St = Arc::new(AppState {
+        cfg,
+        prata: Mutex::new(prata),
+        jobs: Mutex::new(HashMap::new()),
+        gate: Semaphore::new(1),
+        notes: store,
+    });
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("bind {addr}"))?;
     eprintln!("prata-web listening on http://{addr}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app(st)).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+    use http_body_util::BodyExt;
+
+    fn state(dir: &Path) -> St {
+        let mut cfg = Config::from_env();
+        cfg.notes_dir = dir.join("notes");
+        cfg.work_dir = dir.join("work");
+        std::fs::create_dir_all(&cfg.work_dir).unwrap();
+        Arc::new(AppState {
+            notes: Store::open(&cfg.notes_dir).unwrap(),
+            cfg,
+            prata: Mutex::new(PrataInfo::default()),
+            jobs: Mutex::new(HashMap::new()),
+            gate: Semaphore::new(1),
+        })
+    }
+
+    fn note(id: &str, created: i64, text: &str) -> Note {
+        Note {
+            id: id.into(),
+            title: notes::default_title(created, text),
+            created,
+            model: "small".into(),
+            audio_duration: 2.0,
+            filename: "inspelning-20261002.m4a".into(),
+            audio: None,
+            audio_bytes: 0,
+            backend: None,
+            segments: vec![
+                Segment { start: 0.0, end: 1.0, text: text.into() },
+                Segment { start: 1.0, end: 2.0, text: "Slut.".into() },
+            ],
+        }
+    }
+
+    async fn call(app: &Router, method: &str, uri: &str, body: Option<serde_json::Value>, range: Option<&str>) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let mut b = axum::http::Request::builder().method(method).uri(uri);
+        if let Some(r) = range {
+            b = b.header(header::RANGE, r);
+        }
+        let req = match body {
+            Some(v) => b.header(header::CONTENT_TYPE, "application/json").body(Body::from(v.to_string())).unwrap(),
+            None => b.body(Body::empty()).unwrap(),
+        };
+        let r = app.clone().oneshot(req).await.unwrap();
+        let (parts, body) = r.into_parts();
+        (parts.status, parts.headers, body.collect().await.unwrap().to_bytes().to_vec())
+    }
+
+    #[tokio::test]
+    async fn notes_api_end_to_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path());
+        let audio = tmp.path().join("up.m4a");
+        let bytes: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&audio, &bytes).unwrap();
+        st.notes.create(note("aaaa1111", 1000, "Hej från mötet om budgeten"), Some(&audio)).unwrap();
+        st.notes.create(note("bbbb2222", 2000, "Rödeby är en tätort"), None).unwrap();
+        let app = app(st.clone());
+
+        let (c, _, b) = call(&app, "GET", "/api/notes", None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["notes"][0]["id"], "bbbb2222", "newest first");
+        assert_eq!(v["total"], 2);
+
+        let (_, _, b) = call(&app, "GET", "/api/notes?q=BUDGETEN", None, None).await;
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["notes"].as_array().unwrap().len(), 1);
+        assert!(v["notes"][0]["snippet"].as_str().unwrap().contains("budgeten"));
+
+        let (c, _, b) = call(&app, "GET", "/api/notes/aaaa1111", None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["segments"].as_array().unwrap().len(), 2);
+        assert_eq!(v["has_audio"], true);
+
+        // rename
+        let (c, _, _) = call(&app, "PATCH", "/api/notes/aaaa1111", Some(serde_json::json!({"title": "Budgetmöte"})), None).await;
+        assert_eq!(c, StatusCode::OK);
+        let (c, _, _) = call(&app, "PATCH", "/api/notes/aaaa1111", Some(serde_json::json!({"title": "  "})), None).await;
+        assert_eq!(c, StatusCode::BAD_REQUEST);
+        let (c, _, _) = call(&app, "PATCH", "/api/notes/nope", Some(serde_json::json!({"title": "x"})), None).await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+        assert_eq!(st.notes.get("aaaa1111").unwrap().title, "Budgetmöte");
+
+        // audio: full, ranges, unsatisfiable
+        let (c, h, b) = call(&app, "GET", "/api/notes/aaaa1111/audio", None, None).await;
+        assert_eq!((c, b.len()), (StatusCode::OK, 1000));
+        assert_eq!(h[header::CONTENT_TYPE], "audio/mp4");
+        assert_eq!(h[header::ACCEPT_RANGES], "bytes");
+        let (c, h, b) = call(&app, "GET", "/api/notes/aaaa1111/audio", None, Some("bytes=0-1")).await;
+        assert_eq!((c, b.as_slice()), (StatusCode::PARTIAL_CONTENT, &bytes[0..2]));
+        assert_eq!(h[header::CONTENT_RANGE], "bytes 0-1/1000");
+        let (c, _, b) = call(&app, "GET", "/api/notes/aaaa1111/audio", None, Some("bytes=990-")).await;
+        assert_eq!((c, b.as_slice()), (StatusCode::PARTIAL_CONTENT, &bytes[990..]));
+        let (c, _, _) = call(&app, "GET", "/api/notes/aaaa1111/audio", None, Some("bytes=5000-6000")).await;
+        assert_eq!(c, StatusCode::RANGE_NOT_SATISFIABLE);
+        let (c, _, _) = call(&app, "GET", "/api/notes/bbbb2222/audio", None, None).await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+
+        // downloads
+        let (c, h, b) = call(&app, "GET", "/api/notes/aaaa1111/srt", None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        assert!(String::from_utf8(b).unwrap().starts_with("1\r\n00:00:00,000 --> 00:00:01,000\r\nHej från mötet"));
+        assert!(h[header::CONTENT_DISPOSITION].to_str().unwrap().contains("Budgetm%C3%B6te.srt"));
+        let (_, _, b) = call(&app, "GET", "/api/notes/aaaa1111/txt", None, None).await;
+        assert_eq!(String::from_utf8(b).unwrap(), "Hej från mötet om budgeten Slut.\n");
+        let (_, _, b) = call(&app, "GET", "/api/notes/aaaa1111/txt-ts", None, None).await;
+        assert!(String::from_utf8(b).unwrap().starts_with("[00:00:00.000 - 00:00:01.000] Hej"));
+        let (_, _, b) = call(&app, "GET", "/api/notes/aaaa1111/json", None, None).await;
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["title"], "Budgetmöte");
+        let (c, _, _) = call(&app, "GET", "/api/notes/aaaa1111/exe", None, None).await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+
+        // path traversal never resolves
+        for bad in ["/api/notes/..%2F..%2Fetc", "/api/notes/..", "/api/notes/%2e%2e/audio", "/api/notes/AAAA1111"] {
+            let (c, _, _) = call(&app, "GET", bad, None, None).await;
+            assert_eq!(c, StatusCode::NOT_FOUND, "{bad}");
+        }
+
+        // delete
+        let (c, _, _) = call(&app, "DELETE", "/api/notes/aaaa1111", None, None).await;
+        assert_eq!(c, StatusCode::NO_CONTENT);
+        let (c, _, _) = call(&app, "DELETE", "/api/notes/aaaa1111", None, None).await;
+        assert_eq!(c, StatusCode::NOT_FOUND);
+        assert!(!tmp.path().join("notes/aaaa1111").exists());
+
+        // restart: state comes back from disk
+        let st2 = state(tmp.path());
+        assert_eq!(st2.notes.len(), 1);
+        assert!(st2.notes.get("bbbb2222").is_some());
+    }
+
+    #[tokio::test]
+    async fn static_assets_and_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(state(tmp.path()));
+        let (c, h, b) = call(&app, "GET", "/manifest.webmanifest", None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        assert_eq!(h[header::CONTENT_TYPE], "application/manifest+json");
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["display"], "standalone");
+        for p in ["/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"] {
+            let (c, h, b) = call(&app, "GET", p, None, None).await;
+            assert_eq!((c, &h[header::CONTENT_TYPE]), (StatusCode::OK, &HeaderValue::from_static("image/png")), "{p}");
+            assert_eq!(&b[1..4], b"PNG");
+        }
+        let (_, _, b) = call(&app, "GET", "/", None, None).await;
+        let html = String::from_utf8(b).unwrap();
+        for needle in ["rel=\"manifest\"", "apple-touch-icon", "apple-mobile-web-app-capable", "theme-color", "viewport-fit=cover"] {
+            assert!(html.contains(needle), "{needle}");
+        }
+        // the only absolute URL allowed is the SVG namespace inside data: URIs (not a request)
+        let stripped = html.replace("http://www.w3.org/2000/svg", "");
+        assert!(!stripped.contains("http://") && !stripped.contains("https://") && !stripped.contains("//cdn"), "no external requests");
+    }
+
+    #[test]
+    fn host_flags() {
+        let mut cfg = Config::from_env();
+        apply_args(&mut cfg, &["--host".into(), "0.0.0.0".into(), "--port=9000".into(), "--notes-dir".into(), "/tmp/n".into()]).unwrap();
+        assert_eq!((cfg.host.as_str(), cfg.port, cfg.notes_dir.as_path()), ("0.0.0.0", 9000, Path::new("/tmp/n")));
+        assert!(apply_args(&mut cfg, &["--bogus".into()]).is_err());
+        assert!(is_loopback("127.0.0.1") && is_loopback("localhost") && is_loopback("::1") && is_loopback("[::1]"));
+        assert!(!is_loopback("0.0.0.0") && !is_loopback("100.64.1.2"));
+    }
 }
 
 #[cfg(test)]

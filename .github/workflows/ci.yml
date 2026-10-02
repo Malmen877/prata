@@ -43,3 +43,5 @@ jobs:
       - run: node --check npm/bin/prata.js
       - run: node npm/bin/prata.js --help
       - run: cd npm && npm pack --dry-run
+      - name: UI unit test (day grouping)
+        run: TZ=Europe/Stockholm node scripts/test-ui.mjs && TZ=America/Los_Angeles node scripts/test-ui.mjs
