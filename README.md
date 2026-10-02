@@ -98,9 +98,23 @@ scripts/package.sh  builds the release tar.gz
 ```
 prata <AUDIO> [--model tiny|base|small|medium|large|<hf repo id>] [--timestamps] [--out FILE]
               [--revision main|strict|subtitle] [--language sv] [--cpu]
+              [--kv-cache on|off] [--vad on|off] [--vad-min-silence S] [--vad-pad S]
+              [--vad-threshold DB] [--batch-size N] [--pack] [--verbose]
 ```
 
 Without `--timestamps` it prints plain text; with it, SRT. `--cpu` forces CPU on a Metal/CUDA build.
+
+### Speed options
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--kv-cache on\|off` | `on` | Caches the decoder's self-attention keys/values, so each new token costs one layer pass instead of re-running the whole sequence. Same computation, same output (byte-identical SRT in our tests), ~1.6–1.9× faster on CPU. |
+| `--vad on\|off` | `on` | Energy-based voice activity detection. Pauses of at least `--vad-min-silence` seconds (default `1.0`) are skipped, keeping `--vad-pad` seconds (default `0.3`) of audio on each side of speech. Each speech region is decoded with the normal sequential decoder, and no 30 s window reaches across a skipped pause. Timestamps always refer to the original file. If no pause is long enough, the result is exactly the same as `--vad off`. `--vad-threshold DB` overrides the automatic speech threshold (dB above the noise floor). |
+| `--batch-size N` | `0` = auto (4 on Metal/CUDA, 1 on CPU) | Encodes and decodes the current windows of up to N speech regions together. Within a region the windows are the same as the sequential decoder's. This only helps when VAD found several regions. |
+| `--pack` | off | **Experimental.** Packs speech into fixed windows of up to 30 s, cut at quiet points, so that continuous speech can be batched too. About 1.5× faster again on CPU with `--batch-size 4`, but the window borders differ from the sequential decoder, so some words come out differently (4% word difference on a 2.5-minute test clip). |
+| `--verbose` | | Prints the VAD regions or window plan. |
+
+`scripts/bench.sh AUDIO [MODELS…]` times the configurations and reports RTF, peak memory, and WER against the baseline (`scripts/wer.py`). It works on macOS and Linux.
 
 ## Web server configuration
 
@@ -118,6 +132,8 @@ All settings are environment variables. `PRATA_*` is the primary name; the older
 | `PRATA_PYTHON_SCRIPT` | `transcribe.py` next to the binary, or `python/transcribe.py` | Python fallback script |
 | `PRATA_WORK_DIR` | `$TMPDIR/prata-web` | temporary upload directory |
 | `PRATA_MAX_UPLOAD_MB` | `1024` | upload size limit |
+| `PRATA_VAD` | unset (CLI default `on`) | passed as `--vad` (`on`/`off`) |
+| `PRATA_BATCH_SIZE` | unset (CLI default auto) | passed as `--batch-size` |
 
 HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `GET /api/jobs/{id}` (status, segments);
 `GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`.
