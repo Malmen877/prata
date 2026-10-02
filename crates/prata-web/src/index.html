@@ -190,6 +190,21 @@ header .brand{text-decoration:none;color:var(--ink);min-height:44px}
 .btn.danger{color:var(--err);border-color:var(--line-strong)}
 .btn.danger:hover{background:var(--err-soft)}
 .btn.dangerfill{background:var(--err);border-color:var(--err);color:#fff}
+.linkform{margin-top:14px;text-align:left}
+.linkrow{display:flex;align-items:center;gap:8px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--surface);padding:5px 5px 5px 16px;transition:border-color .15s,box-shadow .15s}
+.linkrow:focus-within{border-color:var(--ink);box-shadow:0 0 0 3px color-mix(in srgb,var(--ink) 12%,transparent)}
+.linkrow svg{flex:none;color:var(--ink-3)}
+.linkrow input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:inherit;font-size:15px;height:36px;padding:0}
+.linkrow input::placeholder{color:var(--ink-3)}
+.linkrow .btn{flex:none;height:36px;padding:0 16px}
+.linkform.is-off{opacity:.45;pointer-events:none}
+.linkhint{font-size:12.5px;color:var(--ink-3);margin:8px 6px 0;line-height:1.45}
+.linkhint code{font-family:var(--mono);font-size:12px;color:var(--ink-2);background:var(--surface-2,rgba(127,127,127,.12));padding:1px 6px;border-radius:6px}
+.linkerr{font-size:13.5px;color:var(--err);margin:8px 6px 0;line-height:1.45}
+.srclink{display:inline-flex;align-items:center;gap:6px;max-width:100%;margin-top:6px;font-size:13px;color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--line-strong);padding-bottom:1px}
+.srclink span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.srclink svg{flex:none}
+@media (hover:hover){.srclink:hover{color:var(--ink);border-color:currentColor}}
 .uplink{all:unset;cursor:pointer;display:none;margin:18px auto 0;font-size:14.5px;color:var(--ink-2);padding:10px 14px;border-radius:var(--r-pill)}
 .uplink u{text-decoration:none;color:var(--ink);font-weight:500;border-bottom:1px solid currentColor}
 /* recent notes on the record view */
@@ -238,6 +253,10 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
   .back{display:inline-flex}
 }
 @media (max-width:640px){
+  .linkform{margin-top:6px}
+  .linkrow{padding:5px 5px 5px 14px}
+  .linkrow input{font-size:16px;height:44px}   /* 16px: iOS doesn't zoom on focus */
+  .linkrow .btn{height:44px;padding:0 18px}
   .wrap{padding:0 16px}
   header{min-height:56px}
   #recStatus [aria-hidden]{display:none}
@@ -288,7 +307,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
     <p class="eyebrow">Svensk tal till text · helt lokalt</p>
     <h1>Prata. Vi skriver.<br>Allt stannar på din dator.</h1>
   </div>
-  <p class="lede">Spela in direkt eller släpp en ljudfil. Transkriberingen körs lokalt – inget ljud lämnar datorn.</p>
+  <p class="lede">Spela in direkt, släpp en ljudfil eller klistra in en länk. Transkriberingen körs lokalt – inget ljud lämnar datorn.</p>
 </div>
 
 <div class="stage">
@@ -333,6 +352,18 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       <button type="button" class="btn primary hidden" id="go">Transkribera</button>
       <input type="file" id="file" accept="audio/*,video/*,.m4a,.oga,.ogg,.opus,.flac,.webm" hidden>
     </div>
+
+    <form class="linkform" id="linkForm" autocomplete="off" novalidate>
+      <label class="sr-only" for="linkInput">Klistra in länk till video eller ljud</label>
+      <div class="linkrow">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3.2-3.2a4.5 4.5 0 0 0-6.4-6.4L12 5.6"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3.2 3.2a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></svg>
+        <input id="linkInput" type="url" inputmode="url" enterkeyhint="go" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Klistra in länk" aria-describedby="linkHint linkErr">
+        <button type="button" class="btn hidden" id="linkPaste">Klistra in</button>
+        <button type="submit" class="btn primary" id="linkGo">Transkribera</button>
+      </div>
+      <div class="linkerr hidden" id="linkErr" role="alert"></div>
+      <div class="linkhint" id="linkHint">Video- eller ljudlänk, t.ex. YouTube, SVT Play, en podd eller en mp3-fil.</div>
+    </form>
   </div>
 </div>
 
@@ -376,6 +407,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
           <button type="submit" class="btn primary">Spara</button><button type="button" class="btn" id="renameCancel">Avbryt</button>
         </form>
         <div class="meta" id="meta"></div>
+        <a class="srclink hidden" id="srcLink" target="_blank" rel="noopener noreferrer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg><span id="srcText"></span></a>
       </div>
       <div class="dls">
         <button type="button" class="btn primary" id="copy">Kopiera text</button>
@@ -424,7 +456,7 @@ let hideProcT = null;
 let file = null, jobId = null, timer = null, lastJob = null, lastMedia = null, busy = false;
 let curNote = null;                 // note shown in the note pane
 const localBlobs = new Map();       // note id -> recorded/uploaded blob (this session; for the waveform)
-const STATUS = { uploading: "Laddar upp …", queued: "I kö …", converting: "Konverterar ljud …", running: "Transkriberar …", done: "Klar", error: "Något gick fel" };
+const STATUS = { uploading: "Laddar upp …", downloading: "Laddar ner …", queued: "I kö …", converting: "Konverterar ljud …", running: "Transkriberar …", done: "Klar", error: "Något gick fel" };
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const pad = n => String(n).padStart(2, "0");
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -445,7 +477,11 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 
 // ------------------------------------------------------------ server defaults
 async function loadInfo() {
-  try { const i = await (await fetch("/api/info")).json(); if (i.default_model) setModel(i.default_model); } catch (_) {}
+  try {
+    const i = await (await fetch("/api/info")).json();
+    if (i.default_model) setModel(i.default_model);
+    urlInfo = i.url || null; linkHint();
+  } catch (_) {}
 }
 
 // ------------------------------------------------------------ model picker (drives hidden/compact <select id="model">)
@@ -511,6 +547,7 @@ function setRecState(state, extra) {   // idle | recording | processing | done
   segBtns.forEach(b => b.disabled = off); $("model").disabled = off;
   drop.classList.toggle("is-off", off); drop.setAttribute("aria-disabled", String(off)); drop.tabIndex = off ? -1 : 0;
   $("uplink").classList.toggle("is-off", off); $("uplink").disabled = off;
+  $("linkForm").classList.toggle("is-off", off); $("linkInput").disabled = off; $("linkGo").disabled = off;
   $("go").disabled = off || !file;
   st.classList.toggle("idle", state === "idle");
   if (state === "recording") st.innerHTML = '<span class="live">Spelar in</span><span aria-hidden="true">·</span><span>Tryck för att stoppa och transkribera</span>';
@@ -522,15 +559,16 @@ function setRecState(state, extra) {   // idle | recording | processing | done
 }
 
 // ------------------------------------------------------------ jobs
+let jobIsLink = false;
 function setSteps(status) {
   const order = ["queued", "converting", "running", "done"];
-  const labels = ["Uppladdad", "Konverterad", "Transkriberar", "Klar"];
-  const idx = status === "uploading" ? -1 : order.indexOf(status);
+  const labels = [jobIsLink ? "Nedladdad" : "Uppladdad", "Konverterad", "Transkriberar", "Klar"];
+  const idx = status === "uploading" || status === "downloading" ? -1 : order.indexOf(status);
   $("steps").innerHTML = labels.map((l, i) => {
     let cls = "", pre = "";
     if (status === "done" || i < idx || (i === 0 && idx >= 0)) { cls = "done"; pre = "✓ "; }
     else if (i === idx || (idx === -1 && i === 0)) { cls = "cur"; pre = "● "; }
-    if (i === 0 && idx === -1) l = "Laddar upp";
+    if (i === 0 && idx === -1) l = jobIsLink ? "Laddar ner" : "Laddar upp";
     return `<span class="${cls}">${pre}${l}${cls === "cur" && curPct != null ? " " + curPct + " %" : ""}</span>`;
   }).join("");
 }
@@ -542,6 +580,7 @@ function setBar(pct, failed) {
 }
 function progressPct(j) {
   if (j.status === "done") return 100;
+  if (j.status === "downloading") return j.download_pct != null ? Math.round(j.download_pct) : null;
   if (j.status !== "running") return null;
   const lines = (j.log_tail || []).concat(j.progress || "");
   let pct = null;
@@ -557,7 +596,7 @@ function progressPct(j) {
 async function startJob(blob, filename) {
   if (busy) return;
   clearInterval(timer); clearTimeout(hideProcT);
-  busy = true; lastMedia = { blob, filename }; curPct = null;
+  busy = true; lastMedia = { blob, filename }; curPct = null; jobIsLink = false; lastLink = null;
   setRecState("processing");
   go("#/");
   $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
@@ -592,7 +631,85 @@ function jobFailed(lead, text) {
   setRecState("idle");
   try { localStorage.removeItem("prata.job"); } catch (_) {}
 }
-$("retry").onclick = () => { if (lastMedia && !busy) startJob(lastMedia.blob, lastMedia.filename); };
+$("retry").onclick = () => {
+  if (busy) return;
+  if (lastLink) startUrlJob(lastLink); else if (lastMedia) startJob(lastMedia.blob, lastMedia.filename);
+};
+
+// ------------------------------------------------------------ transcribe from a link
+let lastLink = null, urlInfo = null;
+function linkHint() {
+  const h = $("linkHint");
+  if (!urlInfo) return;
+  const lim = `Max ${urlInfo.max_mb}\u00a0MB och ${fmtLimit(urlInfo.max_duration_s)}.`;
+  h.innerHTML = urlInfo.yt_dlp
+    ? `Video- eller ljudlänk, t.ex. YouTube, SVT Play, en podd eller en mp3-fil. ${esc(lim)}`
+    : `Direktlänkar till ljud- och videofiler fungerar. För YouTube och andra webbsidor behövs yt-dlp på datorn: <code>brew install yt-dlp</code>. ${esc(lim)}`;
+}
+function fmtLimit(s) {
+  if (s >= 3600 && s % 3600 === 0) return s / 3600 + "\u00a0h";
+  if (s >= 3600) return Math.floor(s / 3600) + "\u00a0h " + Math.round(s % 3600 / 60) + "\u00a0min";
+  return Math.round(s / 60) + "\u00a0min";
+}
+function linkError(msg) {
+  const e = $("linkErr");
+  e.textContent = msg || ""; e.classList.toggle("hidden", !msg);
+  $("linkInput").setAttribute("aria-invalid", msg ? "true" : "false");
+}
+function looksLikeUrl(v) {
+  try { const u = new URL(v); return (u.protocol === "https:" || u.protocol === "http:") && !!u.hostname; } catch (_) { return false; }
+}
+function normalizeLink(v) {
+  v = (v || "").trim();
+  if (v && !/^[a-z][a-z0-9+.-]*:/i.test(v) && /^[\w-]+(\.[\w-]+)+(\/|$)/.test(v)) v = "https://" + v;   // "youtu.be/abc" → https://
+  return v;
+}
+$("linkForm").onsubmit = e => {
+  e.preventDefault();
+  if (busy) return;
+  const v = normalizeLink($("linkInput").value);
+  if (!looksLikeUrl(v)) { linkError("Ogiltig länk. Klistra in en hel adress som börjar med https://."); $("linkInput").focus(); return; }
+  $("linkInput").value = v; $("linkInput").blur();
+  startUrlJob(v);
+};
+$("linkInput").addEventListener("input", () => { linkError(""); syncPaste(); });
+// one button at a time: "Klistra in" while the field is empty (if the clipboard API exists), else "Transkribera"
+function syncPaste() {
+  const can = !!(navigator.clipboard && navigator.clipboard.readText), empty = !$("linkInput").value.trim();
+  $("linkPaste").classList.toggle("hidden", !(can && empty));
+  $("linkGo").classList.toggle("hidden", can && empty);
+}
+$("linkPaste").onclick = async () => {   // iOS shows its own "Klistra in" bubble for this
+  try { const t = (await navigator.clipboard.readText()).trim(); if (t) { $("linkInput").value = t; linkError(""); syncPaste(); $("linkGo").focus(); } }
+  catch (_) { $("linkInput").focus(); }
+};
+syncPaste();
+
+async function startUrlJob(url) {
+  if (busy) return;
+  clearInterval(timer); clearTimeout(hideProcT);
+  linkError("");
+  busy = true; lastLink = url; lastMedia = null; curPct = null; jobIsLink = true;
+  setRecState("processing", "Laddar ner …");
+  go("#/");
+  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
+  $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
+  let host = url; try { host = new URL(url).hostname; } catch (_) {}
+  $("statusText").textContent = STATUS.downloading; $("procFile").textContent = host;
+  $("elapsed").textContent = $("model").value; setSteps("downloading"); setBar(null);
+  try {
+    const r = await fetch("/api/jobs/url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, model: $("model").value }) });
+    let j = {}; try { j = await r.json(); } catch (_) {}
+    if (r.status === 400) {   // invalid or blocked link: show it at the input, nothing started
+      busy = false; setRecState("idle"); $("statusSec").classList.add("hidden");
+      linkError(j.error || "Ogiltig länk."); return;
+    }
+    if (!r.ok) throw new Error(j.error || r.status);
+    jobId = j.id;
+    try { localStorage.setItem("prata.job", j.id); } catch (_) {}
+    poll(); timer = setInterval(poll, 1000);
+  } catch (e) { jobFailed("Länken kunde inte skickas.", "Kontrollera att Prata fortfarande körs och försök igen."); }
+}
 
 async function poll() {
   if (!jobId) return;
@@ -607,7 +724,11 @@ async function poll() {
     $("conn").classList.remove("hidden"); return;
   }
   $("conn").classList.add("hidden");
-  if (j.status === "error") return jobFailed("Transkriberingen misslyckades.", humanError(j.error));
+  if (j.status === "error") {
+    if (j.source_url) jobIsLink = true;
+    return jobFailed(j.source_url ? "Länken kunde inte transkriberas." : "Transkriberingen misslyckades.", j.error_user || humanError(j.error));
+  }
+  if (j.source_url) jobIsLink = true;
   curPct = progressPct(j);
   $("statusText").textContent = STATUS[j.status] || j.status;
   $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
@@ -621,6 +742,7 @@ async function poll() {
     setRecState("done", `Klar · ${dec1(j.elapsed_s)} s för ${fmtShort(j.audio_duration)} ljud`);
     flashDone();
     hideProcT = setTimeout(() => { if (!busy) $("statusSec").classList.add("hidden"); }, 1200);
+    if (jobIsLink) { $("linkInput").value = ""; syncPaste(); }
     await refreshNotes();
     if (j.note_id) go("#/notes/" + j.note_id);           // lands in Notes and opens
     else { lastJob = j; showJobResult(j); }
@@ -642,9 +764,18 @@ function render(n, q) {
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
   $("delBtn").classList.remove("hidden"); $("renameBtn").classList.remove("hidden");
+  showSource(n.source_url);
   $("search").value = q || ""; renderSegs(q || "");
   $("resultCard").classList.remove("hidden"); $("notePlaceholder").classList.add("hidden");
   loadMedia(n.has_audio ? base + "audio" : null, localBlobs.get(n.id), n.audio_bytes, n.audio_duration);
+}
+function showSource(u) {
+  const a = $("srcLink");
+  let ok = false, label = "";
+  try { const x = new URL(u); ok = x.protocol === "https:" || x.protocol === "http:"; label = x.hostname.replace(/^www\./, "") + (x.pathname !== "/" ? x.pathname : "") + x.search; } catch (_) {}
+  a.classList.toggle("hidden", !ok);
+  if (ok) { a.href = u; $("srcText").textContent = label.length > 70 ? label.slice(0, 68) + "…" : label; a.title = "Öppna källan i en ny flik: " + u; }
+  else a.removeAttribute("href");
 }
 // fallback when a job finished but the note could not be saved: show it from the job
 function showJobResult(j) {
@@ -655,6 +786,7 @@ function showJobResult(j) {
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
   $("delBtn").classList.add("hidden"); $("renameBtn").classList.add("hidden");
+  showSource(j.source_url);
   $("search").value = ""; renderSegs("");
   $("notesLayout").classList.add("has-note");
   $("resultCard").classList.remove("hidden"); $("notePlaceholder").classList.add("hidden");
