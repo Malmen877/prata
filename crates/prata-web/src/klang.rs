@@ -267,7 +267,10 @@ pub struct Report {
     pub new: usize,
     pub updated: usize,
     pub unchanged: usize,
+    /// Conversations that could not be imported (unreadable, gone, save failed)
     pub skipped: usize,
+    /// Ready conversations deleted here earlier (tombstoned); not part of the message
+    pub deleted_here: usize,
     /// Swedish error message when the sync stopped early (counts so far are kept)
     pub error: Option<String>,
     /// Swedish one-line summary
@@ -281,13 +284,15 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 
 impl Report {
     fn finish(mut self, error: Option<Error>) -> Self {
-        let counts = format!(
-            "{}, {}, {}, {}",
+        let mut counts = format!(
+            "{}, {}, {}",
             plural(self.new, "ny", "nya"),
             plural(self.updated, "uppdaterad", "uppdaterade"),
             plural(self.unchanged, "oförändrad", "oförändrade"),
-            format!("{} hoppades över", self.skipped),
         );
+        if self.skipped > 0 {
+            counts.push_str(&format!(", {} hoppades över", self.skipped));
+        }
         self.message = match &error {
             None => format!("Klang: {counts}."),
             Some(e) if self.new + self.updated + self.unchanged + self.skipped > 0 => format!("{e} Hittills: {counts}."),
@@ -358,6 +363,262 @@ pub fn parse_transcript(content: &str, duration: f64) -> Vec<Segment> {
     segs
 }
 
+// ---------------------------------------------------------------- titles and plain text
+
+const MONTHS: [&str; 24] = [
+    "januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti", "september", "oktober", "november", "december",
+    "january", "february", "march", "may", "june", "july", "august", "october", "jan", "feb", "mar", "apr",
+];
+const MONTHS2: [&str; 9] = ["jun", "jul", "aug", "sep", "sept", "okt", "oct", "nov", "dec"];
+const DAYS: [&str; 21] = [
+    "måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag", "söndag", "mån", "tis", "ons", "tors", "fre", "lör", "sön",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+];
+const GENERIC_TITLES: [&str; 18] = [
+    "untitled", "namnlös", "namnlöst", "utan titel", "no title", "nytt samtal", "new conversation", "samtal", "conversation",
+    "möte", "meeting", "nytt möte", "new meeting", "inspelning", "recording", "ny inspelning", "new recording", "klang",
+];
+const GENERIC_HEADINGS: [&str; 22] = [
+    "sammanfattning", "summary", "sammandrag", "översikt", "overview", "beslut", "decisions", "anteckningar", "notes",
+    "mötesanteckningar", "meeting notes", "agenda", "bakgrund", "background", "att göra", "action items", "nästa steg",
+    "next steps", "viktiga punkter", "key points", "deltagare", "participants",
+];
+
+/// A title that carries no information: empty, only a date/time (Klang names untitled
+/// conversations like "30 sep. 10:51"), a generic word, or Prata's old "Klang-samtal <date>".
+pub fn is_placeholder_title(t: &str) -> bool {
+    let l = t.trim().to_lowercase();
+    if l.is_empty() || GENERIC_TITLES.contains(&l.as_str()) {
+        return true;
+    }
+    let l = l.strip_prefix("klang-samtal").unwrap_or(&l);
+    l.split(|c: char| c.is_whitespace() || ".,:/-–()·".contains(c)).filter(|w| !w.is_empty()).all(|w| {
+        w.chars().all(|c| c.is_ascii_digit())
+            || MONTHS.contains(&w)
+            || MONTHS2.contains(&w)
+            || DAYS.contains(&w)
+            || matches!(w, "kl" | "am" | "pm" | "idag" | "igår" | "today" | "yesterday")
+    })
+}
+
+/// Markdown inline syntax → text: links/images keep their text, emphasis/code markers and tags go.
+pub fn strip_inline_md(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let c: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        // [text](url) and ![alt](url)
+        if ch == '[' || (ch == '!' && c.get(i + 1) == Some(&'[')) {
+            let start = if ch == '!' { i + 1 } else { i };
+            if let Some(close) = (start + 1..c.len()).find(|&k| c[k] == ']') {
+                if c.get(close + 1) == Some(&'(') {
+                    if let Some(end) = (close + 2..c.len()).find(|&k| c[k] == ')') {
+                        out.extend(&c[start + 1..close]);
+                        i = end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        // <tag …>
+        if ch == '<' {
+            if let Some(end) = (i + 1..c.len()).find(|&k| c[k] == '>') {
+                let inner: String = c[i + 1..end].iter().collect();
+                if inner.trim_start_matches('/').chars().next().is_some_and(|x| x.is_ascii_alphabetic()) {
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        match ch {
+            '*' | '`' | '~' => {}
+            '_' => {
+                let prev = i.checked_sub(1).map(|k| c[k]);
+                let next = c.get(i + 1).copied();
+                // keep snake_case / file_names, drop _emphasis_ markers
+                if prev.is_some_and(char::is_alphanumeric) && next.is_some_and(char::is_alphanumeric) {
+                    out.push('_');
+                }
+            }
+            _ => out.push(ch),
+        }
+        i += 1;
+    }
+    out
+}
+
+/// One markdown line → (is_heading, text without block markers).
+fn md_line(l: &str) -> (bool, String) {
+    let t = l.trim();
+    let hashes = t.chars().take_while(|&c| c == '#').count();
+    if (1..=6).contains(&hashes) && t[hashes..].starts_with(' ') {
+        return (true, t[hashes..].trim().trim_end_matches('#').trim().to_string());
+    }
+    let mut t = t.trim_start_matches('>').trim();
+    for m in ["- ", "* ", "+ ", "• "] {
+        if let Some(r) = t.strip_prefix(m) {
+            t = r.trim();
+            break;
+        }
+    }
+    if let Some(i) = t.find(|c: char| !c.is_ascii_digit()) {
+        if i > 0 && i <= 3 && (t[i..].starts_with(". ") || t[i..].starts_with(") ")) {
+            t = t[i + 2..].trim();
+        }
+    }
+    for m in ["[ ] ", "[x] ", "[X] "] {
+        if let Some(r) = t.strip_prefix(m) {
+            t = r.trim();
+        }
+    }
+    (false, t.to_string())
+}
+
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Up to the first sentence end (". ", "! ", "? "); the full stop is dropped.
+fn first_sentence(s: &str) -> &str {
+    let b = s.as_bytes();
+    for i in 0..b.len() {
+        if matches!(b[i], b'.' | b'!' | b'?') && (i + 1 == b.len() || b[i + 1] == b' ') {
+            // not after a single letter/number ("t.ex.", "kl. 10", "1.")
+            let word_start = s[..i].rfind(' ').map(|k| k + 1).unwrap_or(0);
+            if i - word_start <= 1 || s[word_start..i].contains('.') {
+                continue;
+            }
+            return if b[i] == b'.' { &s[..i] } else { &s[..=i] };
+        }
+    }
+    s
+}
+
+/// Shorten to at most `max` characters at a word boundary, with "…" when cut.
+pub fn shorten(s: &str, max: usize) -> String {
+    let s = collapse(s);
+    if s.chars().count() <= max {
+        return s;
+    }
+    let cut: String = s.chars().take(max).collect();
+    let at = cut.rfind(' ').filter(|&i| i >= max / 3).unwrap_or(cut.len());
+    let head = cut[..at].trim_end_matches(|c: char| c.is_whitespace() || ",;:–-(".contains(c));
+    format!("{head}…")
+}
+
+const TITLE_MAX: usize = 60;
+
+fn title_from_summary(md: &str) -> Option<String> {
+    let mut first_text = None;
+    for l in md.lines() {
+        let (heading, t) = md_line(l);
+        let t = collapse(&strip_inline_md(&t));
+        let t = t.trim_end_matches(':').trim();
+        if t.is_empty() || t.chars().all(|c| "-*_=|".contains(c)) {
+            continue;
+        }
+        if heading {
+            if !GENERIC_HEADINGS.contains(&t.to_lowercase().as_str()) {
+                return Some(shorten(t, TITLE_MAX));
+            }
+        } else if first_text.is_none() {
+            first_text = Some(shorten(first_sentence(t), TITLE_MAX));
+        }
+    }
+    first_text.filter(|t| !t.is_empty())
+}
+
+/// "[00:00:12] Talare 1: Hej …" → "Hej …"
+fn strip_speaker(t: &str) -> &str {
+    let t = parse_stamp(t).map(|(_, r)| r).unwrap_or(t).trim();
+    match t.find(": ") {
+        Some(i) if i <= 40 && !t[..i].contains(['.', '!', '?']) => t[i + 2..].trim(),
+        _ => t,
+    }
+}
+
+fn title_from_transcript(segs: &[Segment]) -> Option<String> {
+    let mut words = String::new();
+    for s in segs {
+        let t = strip_speaker(&s.text);
+        if t.is_empty() {
+            continue;
+        }
+        if !words.is_empty() {
+            words.push(' ');
+        }
+        words.push_str(t);
+        if words.split_whitespace().count() >= 4 {
+            break;
+        }
+    }
+    let w = collapse(&words);
+    (!w.is_empty()).then(|| shorten(first_sentence(&w), TITLE_MAX))
+}
+
+/// Title for an imported conversation and where it came from:
+/// Klang's own title (unless it's a placeholder) → summary (first specific heading, else
+/// first sentence) → digest → first transcript words (no timestamps or speaker labels) → date.
+pub fn choose_title(klang: Option<&str>, summary: Option<&str>, digest: Option<&str>, segs: &[Segment], created: i64) -> (String, &'static str) {
+    if let Some(t) = klang.map(collapse).filter(|t| !is_placeholder_title(t)) {
+        return (t.chars().take(200).collect(), "klang");
+    }
+    if let Some(t) = summary.and_then(title_from_summary) {
+        return (t, "summary");
+    }
+    if let Some(t) = digest.and_then(title_from_summary) {
+        return (t, "digest");
+    }
+    if let Some(t) = title_from_transcript(segs) {
+        return (t, "transcript");
+    }
+    (format!("Klang-samtal {}", crate::notes::default_title(created, "")), "date")
+}
+
+/// Markdown summary → readable plain text for .txt exports.
+pub fn md_to_plain(md: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for l in md.lines() {
+        let raw = l.trim_end();
+        let t = raw.trim();
+        if t.is_empty() {
+            if out.last().is_some_and(|x| !x.is_empty()) {
+                out.push(String::new());
+            }
+            continue;
+        }
+        if t.chars().all(|c| "-*_".contains(c)) && t.len() >= 3 {
+            continue; // horizontal rule
+        }
+        let indent = if raw.starts_with("  ") || raw.starts_with('\t') { "  " } else { "" };
+        let (heading, body) = md_line(t);
+        let body = collapse(&strip_inline_md(&body));
+        let lt = t.trim_start_matches('>').trim_start();
+        let line = if heading {
+            if out.last().is_some_and(|x| !x.is_empty()) {
+                out.push(String::new());
+            }
+            body
+        } else if lt.starts_with("- [ ]") || lt.starts_with("* [ ]") {
+            format!("{indent}☐ {body}")
+        } else if lt.starts_with("- [x]") || lt.starts_with("- [X]") || lt.starts_with("* [x]") {
+            format!("{indent}☑ {body}")
+        } else if ["- ", "* ", "+ ", "• "].iter().any(|m| lt.starts_with(m)) {
+            format!("{indent}• {body}")
+        } else if let Some(i) = lt.find(|c: char| !c.is_ascii_digit()).filter(|&i| i > 0 && i <= 3 && (lt[i..].starts_with(". ") || lt[i..].starts_with(") "))) {
+            format!("{indent}{}. {body}", &lt[..i])
+        } else {
+            body
+        };
+        out.push(line);
+    }
+    while out.last().is_some_and(|x| x.is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
 /// Valid local note id for a Klang id: `klang-<id>` when possible, else a stable hash.
 pub fn note_id(klang_id: &str) -> String {
     let ok = !klang_id.is_empty()
@@ -391,17 +652,18 @@ fn build_note(c: &Conv, existing: Option<&Note>) -> Note {
     }
     let clean = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     let summary = clean(&c.summary).or_else(|| clean(&c.digest));
-    let klang_title = clean(&c.title)
-        .map(|t| t.chars().take(200).collect::<String>())
-        .unwrap_or_else(|| format!("Klang-samtal {}", crate::notes::default_title(created, "")));
-    let (title, title_edited) = match existing {
-        Some(n) if n.title_edited => (n.title.clone(), true),
-        _ => (klang_title, false),
+    let (title, title_edited, title_source) = match existing {
+        Some(n) if n.title_edited => (n.title.clone(), true, Some("user".to_string())),
+        _ => {
+            let (t, src) = choose_title(c.title.as_deref(), c.summary.as_deref(), c.digest.as_deref(), &segments, created);
+            (t, false, Some(src.to_string()))
+        }
     };
     Note {
         id: existing.map(|n| n.id.clone()).unwrap_or_else(|| note_id(&c.id)),
         title,
         title_edited,
+        title_source,
         created,
         model: "klang".into(),
         audio_duration: duration,
@@ -416,7 +678,7 @@ fn build_note(c: &Conv, existing: Option<&Note>) -> Note {
 }
 
 fn same_content(a: &Note, b: &Note) -> bool {
-    a.title == b.title && a.summary == b.summary && a.segments == b.segments && a.created == b.created && a.audio_duration == b.audio_duration
+    a.title == b.title && a.title_source == b.title_source && a.summary == b.summary && a.segments == b.segments && a.created == b.created && a.audio_duration == b.audio_duration
 }
 
 /// Run one full sync. Never panics on bad data; stops early on errors (keeping what was imported).
@@ -426,7 +688,8 @@ pub async fn sync(client: &Client, store: &Store) -> Report {
     let mut seen_cursors = HashSet::new();
     let mut seen_ids = HashSet::new();
     for _ in 0..client.max_pages {
-        let mut q = vec![("limit", "100"), ("status", "all")];
+        // only ready conversations: pending/failed ones aren't importable and aren't reported
+        let mut q = vec![("limit", "100"), ("status", "ready")];
         if let Some(c) = &cursor {
             q.push(("cursor", c));
         }
@@ -445,15 +708,37 @@ pub async fn sync(client: &Client, store: &Store) -> Report {
             if c.id.is_empty() || !seen_ids.insert(c.id.clone()) {
                 continue; // duplicate across pages
             }
-            if c.status.as_deref() != Some("ready") || store.klang_deleted(&c.id) {
-                rep.skipped += 1;
+            if c.status.as_deref().is_some_and(|s| s != "ready") {
+                continue; // not ready yet (the API filter should already drop these)
+            }
+            if store.klang_deleted(&c.id) {
+                rep.deleted_here += 1;
                 continue;
             }
             let existing = store.find_klang(&c.id);
             if let Some(n) = &existing {
                 let prev = n.klang.as_ref().and_then(|k| k.updated_at.as_deref());
                 if prev.is_some() && prev == c.updated_at.as_deref() {
-                    rep.unchanged += 1;
+                    // Unchanged in Klang: no detail call. Still refresh an automatic title from the
+                    // locally stored summary/transcript (e.g. notes imported before titles were derived).
+                    let (title, src) = choose_title(c.title.as_deref(), n.summary.as_deref(), None, &n.segments, n.created);
+                    if !n.title_edited && (title != n.title || n.title_source.as_deref() != Some(src)) {
+                        let renamed = title != n.title;
+                        let mut m = n.clone();
+                        m.title = title;
+                        m.title_source = Some(src.into());
+                        match store.replace(m) {
+                            // only a new title counts as an update; recording the source is silent
+                            Ok(_) if renamed => rep.updated += 1,
+                            Ok(_) => rep.unchanged += 1,
+                            Err(e) => {
+                                eprintln!("[klang] could not save conversation: {e:#}");
+                                rep.skipped += 1;
+                            }
+                        }
+                    } else {
+                        rep.unchanged += 1;
+                    }
                     continue;
                 }
             }
@@ -472,7 +757,6 @@ pub async fn sync(client: &Client, store: &Store) -> Report {
                 Err(e) => return rep.finish(Some(e)),
             };
             if detail.status.as_deref().is_some_and(|s| s != "ready") {
-                rep.skipped += 1;
                 continue;
             }
             // the list item's id is authoritative; fill gaps in the detail from it
@@ -714,10 +998,10 @@ mod tests {
         let (_d, st) = store();
         let c = mock::client(&base);
         let r = sync(&c, &st).await;
-        assert_eq!((r.new, r.updated, r.unchanged, r.skipped, r.error.clone()), (3, 0, 0, 2, None), "{r:?}");
-        assert_eq!(m.list_calls.load(Ordering::SeqCst), 3); // 5 items, 2 per page
+        assert_eq!((r.new, r.updated, r.unchanged, r.skipped, r.error.clone()), (3, 0, 0, 0, None), "{r:?}");
+        assert_eq!(m.list_calls.load(Ordering::SeqCst), 2); // 3 ready items, 2 per page
         assert_eq!(m.detail_calls.load(Ordering::SeqCst), 3); // only ready ones
-        assert_eq!(r.message, "Klang: 3 nya, 0 uppdaterade, 0 oförändrade, 2 hoppades över.");
+        assert_eq!(r.message, "Klang: 3 nya, 0 uppdaterade, 0 oförändrade.");
         let a = st.get("klang-conv_a1").unwrap_or_else(|| st.find_klang("conv_a1").unwrap());
         assert_eq!(a.title, "Veckomöte");
         assert_eq!(a.source.as_deref(), Some("klang"));
@@ -736,7 +1020,7 @@ mod tests {
 
         // second run: nothing new, no detail calls
         let r2 = sync(&c, &st).await;
-        assert_eq!((r2.new, r2.updated, r2.unchanged, r2.skipped), (0, 0, 3, 2), "{r2:?}");
+        assert_eq!((r2.new, r2.updated, r2.unchanged, r2.skipped), (0, 0, 3, 0), "{r2:?}");
         assert_eq!(m.detail_calls.load(Ordering::SeqCst), 3);
         assert_eq!(st.len(), 3);
         // a fresh Store (restart) still dedupes
@@ -790,7 +1074,8 @@ mod tests {
         assert!(st.delete(&a.id).unwrap());
         assert!(st.klang_deleted("conv_a1"));
         let r = sync(&c, &st).await;
-        assert_eq!((r.new, r.unchanged, r.skipped), (0, 2, 3), "{r:?}");
+        assert_eq!((r.new, r.unchanged, r.skipped, r.deleted_here), (0, 2, 0, 1), "{r:?}");
+        assert_eq!(r.message, "Klang: 0 nya, 0 uppdaterade, 2 oförändrade.");
         assert!(st.find_klang("conv_a1").is_none());
         // survives a restart; the tombstone file isn't treated as junk
         drop(st);
@@ -897,10 +1182,108 @@ mod tests {
         assert_eq!(parse_ts(Some("nonsense")), None);
     }
 
+    fn seg(t: &str) -> Segment {
+        Segment { start: 0.0, end: 0.0, text: t.into() }
+    }
+
+    #[test]
+    fn placeholder_titles() {
+        for t in ["", "  ", "30 sep. 10:51", "30 sep 10:51", "2 okt 2026 17:45", "Fredag 2 oktober kl. 09:30", "Oct 2, 2026 9:30 AM",
+                  "2026-10-02 09:30", "Untitled", "Möte", "Klang-samtal 30 sep 2026 10:51", "10:51", "Idag 10:51"] {
+            assert!(is_placeholder_title(t), "{t:?}");
+        }
+        for t in ["Veckomöte", "Möte med Ada 30 sep", "Budget 2027", "Maj-planering", "Sep 41 retro"] {
+            assert!(!is_placeholder_title(t), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn titles_from_summary_digest_transcript_date() {
+        let ct = parse_ts(Some("2026-09-30T08:51:00Z")).unwrap();
+        // first specific heading, markdown stripped
+        let (t, src) = choose_title(Some("30 sep. 10:51"), Some("## Sammanfattning\n\n### Budget för **Q4** och [rekrytering](https://x.se)\n- punkt"), None, &[], ct);
+        assert_eq!((t.as_str(), src), ("Budget för Q4 och rekrytering", "summary"));
+        // only generic headings → first sentence of the first text
+        let (t, _) = choose_title(None, Some("## Sammanfattning\nTeamet gick igenom *lanseringen* av appen. Beslut togs om datum.\n## Beslut\n- x"), None, &[], ct);
+        assert_eq!(t, "Teamet gick igenom lanseringen av appen");
+        // list item, checkbox, code, html
+        let (t, _) = choose_title(None, Some("- [ ] `deploy` <b>servern</b> till produktion"), None, &[], ct);
+        assert_eq!(t, "deploy servern till produktion");
+        // abbreviations don't end the sentence; long text is cut at a word with …
+        let (t, _) = choose_title(None, Some("Vi pratade t.ex. om hur kunderna upplever den nya onboardingen och vad som behöver förbättras innan release"), None, &[], ct);
+        assert_eq!(t, "Vi pratade t.ex. om hur kunderna upplever den nya…");
+        assert!(t.chars().count() <= 61);
+        // a real Klang title wins
+        assert_eq!(choose_title(Some("  Kundmöte  Acme "), Some("# Annat"), None, &[], ct), ("Kundmöte Acme".into(), "klang"));
+        // digest, then transcript without timestamps / speaker labels, then the date
+        assert_eq!(choose_title(None, None, Some("Kort genomgång av veckan."), &[], ct).1, "digest");
+        let segs = [seg("[00:00:01] Talare 1: Hej och välkomna till mötet."), seg("Talare 2: Tack!")];
+        assert_eq!(choose_title(Some(""), None, None, &segs, ct), ("Hej och välkomna till mötet".into(), "transcript"));
+        let segs = [seg("Ada Lovelace: Ja"), seg("Bob: precis, vi kör")];
+        assert_eq!(choose_title(None, Some("  "), None, &segs, ct).0, "Ja precis, vi kör");
+        let (t, src) = choose_title(None, None, None, &[], ct);
+        assert!(t.starts_with("Klang-samtal 30 sep 2026") && src == "date", "{t}");
+    }
+
+    #[test]
+    fn summary_as_plain_text() {
+        let md = "## Beslut\n- Releasen flyttas **en vecka**\n  - delpunkt\n\n## Att göra\n- [ ] Cecilia: kolla `login`\n- [x] Klart\n1. Ett\n2) Två\n\n---\nSe [planen](https://ex.se/a_b) <img src=x onerror=alert(1)> och snake_case.";
+        assert_eq!(md_to_plain(md), "Beslut\n• Releasen flyttas en vecka\n  • delpunkt\n\nAtt göra\n☐ Cecilia: kolla login\n☑ Klart\n1. Ett\n2. Två\n\nSe planen och snake_case.");
+        assert_eq!(md_to_plain(""), "");
+        assert_eq!(strip_inline_md("a < b > c, 3<4"), "a < b > c, 3<4");
+    }
+
+    #[tokio::test]
+    async fn untitled_conversations_get_titles_and_old_imports_migrate_without_refetch() {
+        use mock::conv;
+        let convs = vec![
+            conv("u1", "30 sep. 10:51", "ready", Some("2026-09-30T08:51:00Z"), "2026-09-30T09:00:00Z", "## Sammanfattning\nGenomgång av budgeten för 2027. Mer text.", "Talare 1: Hej."),
+            conv("u2", "", "ready", Some("2026-09-30T12:00:00Z"), "2026-09-30T12:30:00Z", "", "[00:00:00] Talare 1: Vi ska prata om flytten till nya kontoret i november\n\n[00:00:09] Talare 2: Ja."),
+        ];
+        let mut convs = convs;
+        convs[1]["digest"] = serde_json::Value::Null;
+        let (m, base) = mock::start(mock::Mock { convs: convs.into(), page_size: 100, ..Default::default() }).await;
+        let (_d, st) = store();
+        let c = mock::client(&base);
+        // simulate notes imported by v0.5.0: date-like Klang title kept, no title_source
+        sync(&c, &st).await;
+        for id in ["u1", "u2"] {
+            let mut n = st.find_klang(id).unwrap();
+            n.title = if id == "u1" { "30 sep. 10:51".into() } else { "Klang-samtal 30 sep 2026 14:00".into() };
+            n.title_source = None;
+            st.replace(n).unwrap();
+        }
+        let d0 = m.detail_calls.load(Ordering::SeqCst);
+        let r = sync(&c, &st).await;
+        assert_eq!((r.new, r.updated, r.unchanged), (0, 2, 0), "{r:?}");
+        assert_eq!(m.detail_calls.load(Ordering::SeqCst), d0, "titles migrate from local data, no refetch");
+        let u1 = st.find_klang("u1").unwrap();
+        assert_eq!((u1.title.as_str(), u1.title_source.as_deref()), ("Genomgång av budgeten för 2027", Some("summary")));
+        let u2 = st.find_klang("u2").unwrap();
+        assert_eq!((u2.title.as_str(), u2.title_source.as_deref()), ("Vi ska prata om flytten till nya kontoret i november", Some("transcript")));
+        // stable afterwards
+        let r = sync(&c, &st).await;
+        assert_eq!((r.updated, r.unchanged), (0, 2), "{r:?}");
+        // a user rename survives both the shortcut and a real Klang change
+        st.rename(&u1.id, "Budgetmöte").unwrap();
+        assert_eq!(sync(&c, &st).await.updated, 0);
+        {
+            let mut v = m.convs.lock().unwrap();
+            v[0]["summary"] = "## Ny rubrik från Klang".into();
+            v[0]["updated_at"] = "2026-10-02T09:00:00Z".into();
+        }
+        let r = sync(&c, &st).await;
+        assert_eq!(r.updated, 1, "{r:?}");
+        let u1 = st.find_klang("u1").unwrap();
+        assert_eq!((u1.title.as_str(), u1.title_source.as_deref(), u1.summary.as_deref()), ("Budgetmöte", Some("user"), Some("## Ny rubrik från Klang")));
+    }
+
     #[test]
     fn swedish_messages() {
-        let r = Report { new: 1, updated: 2, unchanged: 0, skipped: 3, ..Default::default() }.finish(None);
+        let r = Report { new: 1, updated: 2, unchanged: 0, skipped: 3, deleted_here: 4, ..Default::default() }.finish(None);
         assert_eq!(r.message, "Klang: 1 ny, 2 uppdaterade, 0 oförändrade, 3 hoppades över.");
+        let r = Report { new: 0, updated: 0, unchanged: 1, deleted_here: 4, ..Default::default() }.finish(None);
+        assert_eq!(r.message, "Klang: 0 nya, 0 uppdaterade, 1 oförändrad.");
         let r = Report::default().finish(Some(Error::Auth));
         assert!(r.error.as_deref().unwrap().starts_with("Ogiltig Klang-nyckel"));
         assert!(Error::RateLimited(Some(3600)).to_string().contains("60 min"));

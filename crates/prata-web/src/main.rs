@@ -1107,6 +1107,12 @@ async fn download(st: &St, id: &str, kind: &str) -> Response {
 
 /// A transcript download (`txt`, `txt-ts`, `srt`, `json`) named after `stem`.
 fn transcript_file(stem: &str, segs: &[Segment], json: serde_json::Value, kind: &str) -> Response {
+    transcript_file_with(stem, segs, json, kind, None, false)
+}
+
+/// `preface`: plain text put before the transcript in the .txt exports (Klang summary).
+/// `per_line`: plain .txt with one segment (speaker turn) per paragraph instead of running text.
+fn transcript_file_with(stem: &str, segs: &[Segment], json: serde_json::Value, kind: &str, preface: Option<&str>, per_line: bool) -> Response {
     // keep å/ä/ö etc. but no characters that are invalid in file names
     let utf8_stem: String = stem
         .chars()
@@ -1123,7 +1129,16 @@ fn transcript_file(stem: &str, segs: &[Segment], json: serde_json::Value, kind: 
         "srt" => (to_srt(segs), "application/x-subrip; charset=utf-8", "srt"),
         "json" => (serde_json::to_string_pretty(&json).unwrap(), "application/json", "json"),
         "txt-ts" => (to_txt(segs, true), "text/plain; charset=utf-8", "tider.txt"),
+        _ if per_line => (
+            segs.iter().map(|s| s.text.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n") + "\n",
+            "text/plain; charset=utf-8",
+            "txt",
+        ),
         _ => (to_txt(segs, false), "text/plain; charset=utf-8", "txt"),
+    };
+    let body = match preface.filter(|_| kind == "txt" || kind == "txt-ts") {
+        Some(p) => with_preface(p, &body),
+        None => body,
     };
     let name = if kind == "txt-ts" { format!("-{ext}") } else { format!(".{ext}") };
     (
@@ -1241,7 +1256,25 @@ async fn note_download(State(st): State<St>, AxPath((id, kind)): AxPath<(String,
         "audio_duration": n.audio_duration, "filename": n.filename,
         "segments": n.segments, "text": n.text(),
     });
-    transcript_file(&n.title, &n.segments, json, &kind)
+    let mut json = json;
+    if let Some(sm) = &n.summary {
+        json["summary"] = sm.clone().into();
+    }
+    if let Some(src) = &n.source {
+        json["source"] = src.clone().into();
+    }
+    let summary = (n.source.as_deref() == Some("klang")).then(|| n.summary.as_deref().map(klang::md_to_plain)).flatten();
+    let klang = n.source.as_deref() == Some("klang");
+    transcript_file_with(&n.title, &n.segments, json, &kind, summary.as_deref().filter(|s| !s.trim().is_empty()), klang)
+}
+
+fn with_preface(summary: &str, transcript: &str) -> String {
+    let t = transcript.trim_end();
+    if t.is_empty() {
+        format!("Sammanfattning\n\n{summary}\n")
+    } else {
+        format!("Sammanfattning\n\n{summary}\n\n----\n\nTranskript\n\n{t}\n")
+    }
 }
 
 // ---------------------------------------------------------------- Klang import
@@ -1491,7 +1524,7 @@ mod api_tests {
         }
         assert_eq!(s, StatusCode::OK);
         assert_eq!(last["last"]["new"], 2, "{last}");
-        assert_eq!(last["last"]["message"], "Klang: 2 nya, 0 uppdaterade, 0 oförändrade, 0 hoppades över.");
+        assert_eq!(last["last"]["message"], "Klang: 2 nya, 0 uppdaterade, 0 oförändrade.");
         assert_eq!(m.list_calls.load(std::sync::atomic::Ordering::SeqCst), 2, "single flight: 2 pages listed once");
         assert_eq!(m.detail_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 
@@ -1513,6 +1546,10 @@ mod api_tests {
         let (s, _, b) = call(&a, "GET", &format!("/api/notes/{}/txt", id_of("conv_2")), None, None).await;
         assert_eq!(s, StatusCode::OK);
         assert!(String::from_utf8_lossy(&b).contains("Ada: utan tider"));
+        // conv_2 has no summary but a digest → that's the preface
+        assert!(String::from_utf8_lossy(&b).starts_with("Sammanfattning\n\nKort sammanfattning\n\n----"));
+        let (_, _, b) = call(&a, "GET", &format!("/api/notes/{}/txt", id_of("conv_1")), None, None).await;
+        assert_eq!(String::from_utf8_lossy(&b), "Sammanfattning\n\nViktigt\n\n----\n\nTranskript\n\nAda: Hej.\n");
         let (s, _, _) = call(&a, "GET", &format!("/api/notes/{}/audio", id_of("conv_2")), None, None).await;
         assert_eq!(s, StatusCode::NOT_FOUND);
         // delete → tombstone → re-sync skips it
@@ -1528,7 +1565,8 @@ mod api_tests {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert_eq!((last["last"]["new"].as_u64(), last["last"]["unchanged"].as_u64(), last["last"]["skipped"].as_u64()), (Some(0), Some(1), Some(1)), "{last}");
+        assert_eq!((last["last"]["new"].as_u64(), last["last"]["unchanged"].as_u64(), last["last"]["skipped"].as_u64()), (Some(0), Some(1), Some(0)), "{last}");
+        assert_eq!(last["last"]["deleted_here"], 1, "{last}");
         let all = String::from_utf8_lossy(&all);
         assert!(!all.contains(klang::mock::KEY), "API key leaked into a response");
         // nor into the note files

@@ -68,6 +68,10 @@ pub struct Note {
     /// The user renamed the note; imports must not overwrite the title
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub title_edited: bool,
+    /// Where an imported note's title came from: klang | summary | digest | transcript | date | user.
+    /// Missing in older note.json files (then `title_edited` decides: renamed = user, else automatic).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_source: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -364,6 +368,9 @@ impl Store {
         let mut n = n.clone();
         n.title = title;
         n.title_edited = true;
+        if n.title_source.is_some() || n.klang.is_some() {
+            n.title_source = Some("user".into());
+        }
         write_atomic(&self.dir.join(id).join("note.json"), &serde_json::to_vec_pretty(&n)?)?;
         notes.insert(id.to_string(), n.clone());
         Ok(Some(n))
@@ -430,6 +437,7 @@ impl Store {
             // renamed while an import was running: the user's title wins
             note.title = old.title.clone();
             note.title_edited = true;
+            note.title_source = old.title_source.clone();
         }
         write_atomic(&self.dir.join(&note.id).join("note.json"), &serde_json::to_vec_pretty(&note)?)?;
         notes.insert(note.id.clone(), note.clone());
