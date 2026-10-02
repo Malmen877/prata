@@ -120,8 +120,24 @@ mod imp {
         let t_load = Instant::now();
         let client = HFClientSync::new()?;
         let vocab_p = hub_get(&client, &rev, VOCAB_FILE)?;
-        let dec_p = hub_get(&client, &rev, DECODER_FILE)?;
-        let enc_p = hub_get(&client, &rev, ENCODER_FILE)?;
+        // Experimental knobs for evaluation (not part of the supported interface):
+        // PRATA_SNABB_PRECISION=int8|fp16|fp32, PRATA_SNABB_BEAM=<n>, PRATA_SNABB_BEAM_NORM=1
+        let precision = std::env::var("PRATA_SNABB_PRECISION").unwrap_or_else(|_| "int8".into());
+        let beam: usize = std::env::var("PRATA_SNABB_BEAM").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let beam_norm = std::env::var("PRATA_SNABB_BEAM_NORM").map(|v| v == "1").unwrap_or(false);
+        let (enc_f, dec_f) = match precision.as_str() {
+            "fp32" => ("encoder-model.onnx".to_string(), "decoder_joint-model.onnx".to_string()),
+            "fp16" | "int4" => (format!("encoder-model.{precision}.onnx"), format!("decoder_joint-model.{precision}.onnx")),
+            _ => (ENCODER_FILE.to_string(), DECODER_FILE.to_string()),
+        };
+        if precision != "int8" || beam > 1 {
+            eprintln!("[info] snabb: experimental precision={precision} beam={beam} norm={beam_norm}");
+        }
+        let dec_p = hub_get(&client, &rev, &dec_f)?;
+        let enc_p = hub_get(&client, &rev, &enc_f)?;
+        if precision == "fp32" {
+            hub_get(&client, &rev, "encoder-model.onnx.data")?;
+        }
         let vocab = text::Vocab::parse(&std::fs::read_to_string(&vocab_p)?)?;
         let mut encoder = engine::Encoder::load(&enc_p, o.threads)?;
         let mut joint = engine::DecoderJoint::load(&dec_p, 1024, o.threads)?;
@@ -158,7 +174,11 @@ mod imp {
             }
             let (feats, n_frames, valid) = mel::window_features(&pcm, w.start, w.end, &stats);
             let (enc, n, dim) = encoder.run(feats, n_frames, valid)?;
-            let toks = tdt::greedy(&mut joint, &cfg, n, |t| &enc[t * dim..(t + 1) * dim])?;
+            let toks = if beam > 1 {
+                tdt::beam(&mut joint, &cfg, n, |t| &enc[t * dim..(t + 1) * dim], beam, beam_norm)?
+            } else {
+                tdt::greedy(&mut joint, &cfg, n, |t| &enc[t * dim..(t + 1) * dim])?
+            };
             let off = w.start as f64 / 100.0;
             let timed: Vec<TimedTok> = toks
                 .iter()

@@ -51,7 +51,7 @@ pub fn disable_amx() {
                 || libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &fprog as *const sock_fprog) == 0)
     };
     if !ok {
-        eprintln!("[info] snabb: could not restrict AMX (seccomp unavailable); continuing");
+        eprintln!("[warn] snabb: could not restrict AMX (seccomp unavailable here); continuing with onnxruntime defaults");
     }
 }
 
