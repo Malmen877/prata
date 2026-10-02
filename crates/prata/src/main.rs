@@ -203,7 +203,7 @@ struct Seg {
 }
 
 struct Decoder {
-    encoder: m::model::AudioEncoder,
+    encoder: kvdec::AudioEncoder,
     decoder: kvdec::TextDecoder,
     max_pos: usize,
     /// self-attention KV cache in the decoder (--kv-cache)
@@ -287,7 +287,7 @@ impl Decoder {
     }
 
     fn decode(&mut self, mel: &Tensor, t: f64) -> Result<DecodingResult> {
-        let feats = self.encoder.forward(mel, true)?;
+        let feats = self.encoder.forward(mel)?;
         let max_len = self.max_pos / 2;
         let mut tokens = self.prompt.clone();
         let mut sum_lp = 0f64;
@@ -416,7 +416,7 @@ impl Decoder {
     fn decode_batch(&mut self, mels: &Tensor) -> Result<Vec<DecodingResult>> {
         let b = mels.dim(0)?;
         let dev = mels.device().clone();
-        let feats = self.encoder.forward(mels, true)?;
+        let feats = self.encoder.forward(mels)?;
         let max_len = self.max_pos / 2;
         let max_pos = self.max_pos;
         let mut toks: Vec<Vec<u32>> = vec![self.prompt.clone(); b];
@@ -715,10 +715,9 @@ fn main() -> Result<()> {
     <byteorder::LittleEndian as byteorder::ByteOrder>::read_f32_into(mel_bytes, &mut filters);
 
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], m::DTYPE, &device)? };
-    // Encoder from candle-transformers; the decoder is our KV-cached port
-    // (kvdec.rs), loaded after candle's decoder is dropped so weights aren't held twice.
-    let m::model::Whisper { encoder, decoder, .. } = m::model::Whisper::load(&vb, config.clone())?;
-    drop(decoder);
+    // Ported encoder/decoder (kvdec.rs): same weights and ops as candle's whisper
+    // model, plus a self-attention KV cache in the decoder.
+    let encoder = kvdec::AudioEncoder::load(vb.pp("model.encoder"), &config)?;
     let decoder = kvdec::TextDecoder::load(vb.pp("model.decoder"), &config)?;
     let load_s = t_load.elapsed().as_secs_f64();
 
