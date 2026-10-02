@@ -35,46 +35,63 @@ from this repository's GitHub Release into `~/.prata/<version>/`, starts the ser
 (8795 if available) and opens your browser. Press **Ctrl+C** to stop. The first transcription with a
 model downloads its weights from Hugging Face into `~/.cache/huggingface/`.
 
-Options: `npx prata-app --port 9000 --no-open --model medium`. See [npm/README.md](npm/README.md).
+Options: `npx prata-app --port 9000 --no-open --model snabb`. `--model` sets the default model (`PRATA_MODEL`): `snabb`,
+`small` or `large` preselect that button in the UI; `tiny`, `base` and `medium` are only used as the default for HTTP API
+jobs that don't name a model (the UI then preselects Standard). See [npm/README.md](npm/README.md).
 
 ## Models
 
-The web UI offers three models (the CLI and HTTP API still accept all five KB-Whisper sizes, see below):
+The web UI offers three models (the CLI and HTTP API also accept `tiny`, `base` and `medium`, see below):
 
 | In the UI | Model | Description (as shown) |
 |---|---|---|
 | **Snabb** | Klang Pianissimo (`snabb`) | Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar |
 | **Standard** (default) | KB-Whisper small (`small`) | Bästa balansen mellan kvalitet och tid |
+<!-- TODO(0.6.1-numbers) LARGE-DESC: keep "Högst kvalitet, långsammast" only if Large beats Standard on WER; else "Största modellen, långsammast" -->
 | **Large** | KB-Whisper large (`large`) | Högst kvalitet, långsammast |
 
 `tiny`, `base` and `medium` are hidden in the UI but remain available via the CLI (`--model tiny`), the HTTP API
-(`"model": "medium"`) and `PRATA_MODEL`. Standard stays preselected and Prata never switches models by itself: when a file
-or recording is longer than 15 minutes and Standard is selected, the UI shows a small hint
-(“Lång inspelning – Snabb går betydligt fortare”) that switches to Snabb only if you click it.
+(`"model": "medium"`) and `PRATA_MODEL`. Standard stays preselected and Prata never switches models by itself.
 
-Speed and accuracy on a 12.5-minute Swedish recording, M4 Mac mini (WER after lowercasing and removing punctuation;
-time is wall time for the whole file):
+**Long-recording hint.** When a file or recording is longer than 15 minutes and a model other than Snabb is selected,
+the UI asks the server (`GET /api/model-hint?duration_s=…&model=…`) and shows a small hint
+(“Lång inspelning – Snabb går betydligt fortare. Byt till Snabb”). It switches to Snabb only when you click it.
+The rule lives on the server (`crates/prata-web/src/hint.rs`); there is no hint when this build has no Snabb or the
+duration is unknown.
 
-| Model | Time | WER | Notes |
-|---|---:|---:|---|
-| **Snabb** (Klang Pianissimo, ONNX int8, CPU) | ~19 s | 6.8 % | about 7× faster than small; somewhat more errors |
-| **Standard** (KB-Whisper small, Metal) | 132 s | 4.6 % | **default** |
-| **Large** (KB-Whisper large, Metal) | 595 s | 4.4 % | best quality; needs a 16 GB+ Mac |
+<!-- TODO(0.6.1-numbers) TABLE: fill from the FINAL NUMBERS block in /workspace/pianissimo-int-status.log -->
+Speed and accuracy on a 12.5-minute Swedish recording (long12) on a Mac mini M4. The time is wall time for the whole
+file, and the peak memory is the peak RSS of the `prata` process. WER is scored with Prata's Swedish
+normalisation (lowercase, punctuation removed, Swedish number words and digits compare equal, hyphens unified).
+The first column is scored against the original reference text. The text was taken from a 2010 article, and the
+reader does not follow it word for word in a few places. The second column uses a reference corrected for those places.
 
-The 6.8 % is the shipped int8 ONNX build; the same model under MLX (8-bit) scored 6.4 % on this clip. One clip is not a
-general accuracy figure. `scripts/bench-models.sh` reproduces the comparison on your own recordings.
+| Model | Time | Peak memory | WER | WER (corrected ref) | Notes |
+|---|---:|---:|---:|---:|---|
+| **Snabb** (Klang Pianissimo, ONNX int8, CPU) | TBD | TBD | TBD | TBD | fastest; recommended for long recordings |
+| **Standard** (KB-Whisper small, Metal) | TBD | TBD | TBD | TBD | **default** |
+| **Large** (KB-Whisper large, Metal) | TBD | TBD | TBD | TBD | needs a 16 GB+ Mac |
+<!-- /TODO(0.6.1-numbers) TABLE -->
+
+One recording is not a general accuracy figure; see the model cards for benchmark WERs.
+`scripts/bench-models.sh` reproduces the comparison on your own recordings.
 
 ### Snabb (Klang Pianissimo)
 
 [Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv) is a Swedish Parakeet TDT model by KlangAI. Prata runs
 KlangAI's official int8 ONNX export, [KlangAI/pianissimo-sv-onnx](https://huggingface.co/KlangAI/pianissimo-sv-onnx),
-unmodified, with ONNX Runtime on the CPU. It writes punctuation and casing itself and gives sentence-level timestamps.
+unmodified, with ONNX Runtime on the CPU. Pianissimo is a fine-tune of NVIDIA Parakeet TDT 0.6B v3. It writes punctuation
+and casing itself and gives sentence-level timestamps. Long audio is decoded in 30-second windows with overlapping
+context on both sides.
 
 - **First use:** the model files (about 660 MB: `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, `vocab.txt`)
   are downloaded from Hugging Face into the normal cache (`~/.cache/huggingface/`, `HF_HOME` respected). The web UI
   shows the download progress; later runs start straight away.
 - **Platforms:** macOS Apple Silicon and Linux x64. The macOS Intel build has no Snabb; the option is shown greyed out there.
-- **CLI:** `prata recording.m4a --model snabb --timestamps`
+- **CLI:** `prata recording.m4a --model snabb --timestamps` (`pianissimo`, `KlangAI/pianissimo-sv` and
+  `KlangAI/pianissimo-sv-onnx` are accepted too). The model revision is pinned to the one this version was tested with.
+- **No Python fallback:** if the build has no Snabb, a Snabb job fails with a Swedish message. It does not silently
+  run another model.
 - **License:** CC BY 4.0, © KlangAI – see [Credits and licenses](#credits-and-licenses).
 
 ### KB-Whisper sizes
@@ -132,18 +149,21 @@ Package a release archive the same way CI does:
 
 ```bash
 scripts/package.sh darwin-arm64        # → dist/prata-v<version>-darwin-arm64.tar.gz (+ .sha256)
-PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.1.0-darwin-arm64.tar.gz node npm/bin/prata.js
+PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.6.1-darwin-arm64.tar.gz node npm/bin/prata.js
 ```
 
 ### Repository layout
 
 ```
 crates/prata/       CLI (Candle whisper decoder, forced Swedish, 30 s windows, SRT output)
+                    src/snabb/: Snabb engine (Klang Pianissimo via onnxruntime; `snabb` cargo feature)
 crates/prata-web/   axum web server + single-file UI (src/index.html) and PWA icons (src/assets/), embedded in the binary
-                    notes storage in src/notes.rs, link downloads (SSRF checks, yt-dlp) in src/fetch.rs
+                    notes storage in src/notes.rs, link downloads (SSRF checks, yt-dlp) in src/fetch.rs,
+                    Klang import in src/klang.rs, long-recording hint in src/hint.rs
 python/             optional Python fallback backend (transformers), requirements.txt
 npm/                `prata-app` launcher (pure Node, no dependencies)
 scripts/package.sh  builds the release tar.gz
+scripts/bench-models.sh, wer_sv.py  model comparison (time, peak memory, WER)
 scripts/test-ui.mjs unit test for the UI's day grouping: `TZ=Europe/Stockholm node scripts/test-ui.mjs`
 .github/workflows/  CI and tag-triggered release (GitHub Release assets + optional npm publish)
 ```
@@ -157,7 +177,9 @@ prata <AUDIO> [--model tiny|base|small|medium|large|snabb|<hf repo id>] [--times
               [--vad-threshold DB] [--batch-size N] [--pack] [--verbose]
 ```
 
-Without `--timestamps` it prints plain text; with it, SRT. `--cpu` forces CPU on a Metal/CUDA build.
+Without `--timestamps` it prints plain text; with it, SRT. `--cpu` forces CPU on a Metal/CUDA build. The CLI's default
+model is `large` (the web UI's is `small`). `prata --help` ends with a line saying whether this build includes Snabb.
+The VAD options below apply to all models; `--batch-size`, `--pack` and `--kv-cache` apply to KB-Whisper only.
 
 ### Speed options
 
@@ -209,7 +231,9 @@ Flags override the environment variables below. `PRATA_*` is the primary name; t
 HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `POST /api/jobs/url` (`{"url": "…", "model": "small"}`)
 → `{id}` or `400 {error}` for an invalid/blocked link; `GET /api/jobs/{id}` (status `downloading|queued|converting|running|done|error`,
 `download_pct`, segments, `note_id` when done, `error_user` with a readable message);
-`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`; `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
+`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info` (includes `default_model` and `models`: id, label,
+description, availability, download size, whether it's downloaded, license); `GET /api/model-hint?duration_s=S&model=M`
+(`{suggest: "snabb"|null, reason}`); `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
 
 Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search word must occur in the title, transcript or summary),
 `GET /api/notes/{id}`, `PATCH /api/notes/{id}` with `{"title": "…"}`, `DELETE /api/notes/{id}` (removes the audio too),
@@ -399,7 +423,8 @@ python3 python/transcribe.py recording.m4a --model small --timestamps
 
 - Jobs run one at a time. A job that is still running when the server stops is lost; finished ones are saved as notes.
 - Long recordings are kept in browser memory until you press stop.
-- A word can occasionally be dropped or repeated at a 30-second window boundary.
+- A word can occasionally be dropped or repeated at a 30-second window boundary (both KB-Whisper and Snabb decode in windows).
+- Snabb is not available in the macOS Intel build.
 - The microphone needs a secure context: use `http://127.0.0.1`/`localhost` on the Mac, or HTTPS (e.g. `tailscale serve`) from other devices – not a plain LAN IP.
 
 ## Credits and licenses
@@ -414,10 +439,13 @@ Prata's own code is released under the [MIT License](LICENSE) © 2026 Kevin Malm
   [KlangAI/pianissimo-sv](https://huggingface.co/KlangAI/pianissimo-sv), licensed
   [**CC BY 4.0**](https://creativecommons.org/licenses/by/4.0/). Prata uses KlangAI's official ONNX export
   [KlangAI/pianissimo-sv-onnx](https://huggingface.co/KlangAI/pianissimo-sv-onnx) without changes. The files are
-  downloaded from Hugging Face at runtime and are not redistributed here.
+  downloaded from Hugging Face at runtime and are not redistributed here. Pianissimo is a fine-tune of
+  [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (CC BY 4.0).
+- **onnx-asr** (MIT) / **NVIDIA NeMo** (Apache-2.0): Snabb's log-mel front end follows onnx-asr's NeMo preprocessor, and
+  `crates/prata/src/snabb/nemo128fb.bytes` holds its 128-band (librosa Slaney) mel filter bank.
 - **ONNX Runtime** (via the `ort` crate) – MIT; linked into builds with Snabb.
 - **Hugging Face Candle** – Apache-2.0 / MIT. The CLI is derived from Candle's whisper example.
 - **OpenAI Whisper** – MIT (code); model architecture, decoding rules and mel filters.
 - **ffmpeg** is used at runtime and installed separately.
 
-Prata is an independent project and is not affiliated with KBLab, KlangAI, Hugging Face or OpenAI.
+Prata is an independent project and is not affiliated with KBLab, KlangAI, NVIDIA, Hugging Face or OpenAI.

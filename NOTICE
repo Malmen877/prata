@@ -2,7 +2,7 @@ Prata
 Copyright (c) 2026 Kevin Malmgren – MIT License (see LICENSE)
 
 Prata is an independent project. It is not affiliated with or endorsed by
-the National Library of Sweden (KBLab), KlangAI, Hugging Face or OpenAI.
+the National Library of Sweden (KBLab), KlangAI, NVIDIA, Hugging Face or OpenAI.
 
 Third-party components and models
 ---------------------------------
@@ -26,11 +26,24 @@ Klang Pianissimo ("Snabb" in Prata) (KlangAI)
   decoder_joint-model.int8.onnx, vocab.txt), without modifications.
   The model files are NOT included in this repository or in the release
   archives. They are downloaded by the user from Hugging Face on first use.
+  Pianissimo is a fine-tune of NVIDIA Parakeet TDT 0.6B v3
+  (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3, CC BY 4.0).
+  Citation: Klang (2026) Klang Pianissimo. Hugging Face model repository,
+  https://huggingface.co/KlangAI/pianissimo-sv
+
+onnx-asr (https://github.com/istupakov/onnx-asr) and NVIDIA NeMo
+  (https://github.com/NVIDIA/NeMo)
+  License: MIT (onnx-asr) / Apache License 2.0 (NeMo)
+  crates/prata/src/snabb/mel.rs reimplements onnx-asr's NeMo-style log-mel
+  preprocessor; crates/prata/src/snabb/nemo128fb.bytes is its 128-band mel
+  filter bank (librosa Slaney mel, librosa: ISC License).
 
 ONNX Runtime (via the ort crate, https://github.com/pykeio/ort)
   https://github.com/microsoft/onnxruntime
   License: MIT (onnxruntime) / MIT OR Apache-2.0 (ort)
-  Linked statically into builds with the "snabb" feature.
+  Linked statically into builds with the "snabb" feature (release builds for
+  macOS Apple Silicon and Linux x64), using the prebuilt onnxruntime binaries
+  that ort downloads at build time.
 
 Hugging Face Candle (candle-core, candle-nn, candle-transformers)
   https://github.com/huggingface/candle
@@ -43,7 +56,8 @@ OpenAI Whisper (model architecture, decoding rules, mel filters)
   https://github.com/openai/whisper
   License: MIT (code); the openai/whisper-* model weights on Hugging Face are Apache-2.0
 
-Other Rust crates (axum, tokio, serde, clap, hf-hub, tokenizers, …) are used
+Other Rust crates (axum, tokio, serde, clap, hf-hub, tokenizers, reqwest/rustls,
+libc, …) are used
 under their respective licenses (mostly MIT and/or Apache-2.0); see Cargo.lock.
 
 The optional Python fallback (python/transcribe.py) uses PyTorch (BSD-3-Clause)
