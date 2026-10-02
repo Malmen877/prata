@@ -79,10 +79,46 @@ pub fn keep_core(words: Vec<Word>, w: &Window, total: usize) -> Vec<Word> {
     words.into_iter().filter(|wd| wd.start() >= from && wd.start() < to).collect()
 }
 
+/// Append the words of the next window, dropping words at the seam that are the
+/// same spoken word seen by both windows: the cut can fall inside a word, so each
+/// window may place that word's start on its own side of the cut. Decided on
+/// timestamps only: the first new word is dropped while it overlaps the last kept
+/// word by more than half of the shorter one. A real repetition ("Rödeby. Rödeby
+/// är") is two words one after the other and does not overlap.
+pub fn append_at_seam(words: &mut Vec<Word>, new: Vec<Word>) {
+    let mut new = new.into_iter().peekable();
+    while let (Some(last), Some(first)) = (words.last(), new.peek()) {
+        let ov = last.end().min(first.end()) - last.start().max(first.start());
+        let shorter = (last.end() - last.start()).min(first.end() - first.start()).max(1e-6);
+        if ov > 0.5 * shorter {
+            new.next();
+        } else {
+            break;
+        }
+    }
+    words.extend(new);
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::text::{tests::tiny_vocab, words, TimedTok};
     use super::*;
+
+    #[test]
+    fn seam_drops_the_same_word_seen_by_both_windows_but_keeps_real_repeats() {
+        let w = |id: u32, a: f64, b: f64| Word { toks: vec![TimedTok { id, start: a, end: b }] };
+        // window A kept "gör" 51.96-52.28, window B kept "gör" 52.03-52.35 (cut at 51.99)
+        let mut words = vec![w(1, 51.0, 51.5), w(2, 51.96, 52.28)];
+        append_at_seam(&mut words, vec![w(2, 52.03, 52.35), w(3, 52.4, 52.6)]);
+        assert_eq!(words.iter().map(|x| x.toks[0].id).collect::<Vec<_>>(), vec![1, 2, 3]);
+        // a real repetition right after the cut is kept
+        let mut words = vec![w(4, 10.0, 10.5)];
+        append_at_seam(&mut words, vec![w(4, 10.6, 11.1)]);
+        assert_eq!(words.len(), 2);
+        let mut words = vec![];
+        append_at_seam(&mut words, vec![w(5, 0.0, 0.3)]);
+        assert_eq!(words.len(), 1);
+    }
 
     #[test]
     fn short_audio_is_one_window() {

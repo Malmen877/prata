@@ -550,7 +550,7 @@ fn models_info(info: &PrataInfo, cache: Option<&Path>) -> serde_json::Value {
         ("base", "base", "snabb", 290_000_000),
         ("small", "Standard", "Bästa balansen mellan kvalitet och tid", 967_000_000),
         ("medium", "medium", "bättre", 3_060_000_000),
-        ("large", "Large", "Högst kvalitet, långsammast", 3_090_000_000),
+        ("large", "Large", "Största modellen, långsammast", 3_090_000_000),
     ];
     let mut v: Vec<serde_json::Value> = kb
         .iter()
@@ -2201,7 +2201,7 @@ mod tests {
         assert_eq!(m("snabb")["license"]["name"], "CC BY 4.0");
         assert_eq!(m("snabb")["description"], "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar");
         assert_eq!((m("small")["label"].as_str(), m("small")["description"].as_str()), (Some("Standard"), Some("Bästa balansen mellan kvalitet och tid")));
-        assert_eq!((m("large")["label"].as_str(), m("large")["description"].as_str()), (Some("Large"), Some("Högst kvalitet, långsammast")));
+        assert_eq!((m("large")["label"].as_str(), m("large")["description"].as_str()), (Some("Large"), Some("Största modellen, långsammast")));
         assert_eq!(m("small")["downloaded"], true);
         assert_eq!(m("large")["downloaded"], false);
         // a build without the engine

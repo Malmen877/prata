@@ -133,25 +133,41 @@ mod imp {
         if precision != "int8" || beam > 1 {
             eprintln!("[info] snabb: experimental precision={precision} beam={beam} norm={beam_norm}");
         }
-        let dec_p = hub_get(&client, &rev, &dec_f)?;
-        let enc_p = hub_get(&client, &rev, &enc_f)?;
-        if precision == "fp32" {
-            hub_get(&client, &rev, "encoder-model.onnx.data")?;
-        }
+        // PRATA_SNABB_DIR=<dir>: load the ONNX files from a plain directory (needed for
+        // fp32, whose external weights file onnxruntime will not follow through the
+        // Hugging Face cache's symlinks)
+        let local = std::env::var_os("PRATA_SNABB_DIR").map(PathBuf::from);
+        let (dec_p, enc_p) = match &local {
+            Some(d) => (d.join(&dec_f), d.join(&enc_f)),
+            None => (hub_get(&client, &rev, &dec_f)?, hub_get(&client, &rev, &enc_f)?),
+        };
         let vocab = text::Vocab::parse(&std::fs::read_to_string(&vocab_p)?)?;
         let mut encoder = engine::Encoder::load(&enc_p, o.threads)?;
         let mut joint = engine::DecoderJoint::load(&dec_p, 1024, o.threads)?;
         let load_s = t_load.elapsed().as_secs_f64();
 
-        let pcm = crate::load_audio(&o.audio)?;
-        let duration = pcm.len() as f64 / mel::SAMPLE_RATE as f64;
+        let orig = crate::load_audio(&o.audio)?;
+        let duration = orig.len() as f64 / mel::SAMPLE_RATE as f64;
+        // Statistics over the real recording only (see below); `pad` seconds of
+        // silence before the start give the first window some left context.
+        let stats = mel::Stats::of_signal(&orig);
+        let pad: f64 = std::env::var("PRATA_SNABB_PAD").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let seam_dedup = std::env::var("PRATA_SNABB_SEAM").map(|v| v != "0").unwrap_or(true);
+        let pad_n = (pad.max(0.0) * mel::SAMPLE_RATE as f64) as usize;
+        let pcm = if pad_n > 0 {
+            let mut v = vec![0f32; pad_n];
+            v.extend_from_slice(&orig);
+            v
+        } else {
+            orig
+        };
+        let pad = pad_n as f64 / mel::SAMPLE_RATE as f64;
         let total = pcm.len() / mel::HOP;
         let db = crate::vad::frame_db(&pcm, total);
         let windows = chunk::plan(total, &db, &o.chunk);
         // Normalisation statistics over the whole recording: every window then gets
         // exactly the features of a single pass, independent of how much silence
         // happens to fall inside it.
-        let stats = mel::Stats::of_signal(&pcm);
         // VAD (on by default): windows whose core has no speech are skipped.
         let speech = if o.vad {
             let (r, rep) = crate::vad::speech_regions(&db, &o.vad_opts);
@@ -192,7 +208,12 @@ mod imp {
                 let t: Vec<String> = toks.iter().map(|k| format!("{}@{}+{}", vocab.piece(k.id), k.frame, k.dur)).collect();
                 eprintln!("[tokens] window {i} ({:.2}-{:.2}s): {}", off, w.end as f64 / 100.0, t.join(" "));
             }
-            words.extend(chunk::keep_core(text::words(&vocab, &timed), w, total));
+            let kept = chunk::keep_core(text::words(&vocab, &timed), w, total);
+            if seam_dedup {
+                chunk::append_at_seam(&mut words, kept);
+            } else {
+                words.extend(kept);
+            }
             eprintln!(
                 "[info] window {:.1}s done in {:.1}s ({}/{})",
                 w.keep_from as f64 / 100.0,
@@ -205,6 +226,8 @@ mod imp {
         // token ends never run past the audio
         for wd in words.iter_mut() {
             for t in wd.toks.iter_mut() {
+                t.start = (t.start - pad).max(0.0);
+                t.end = (t.end - pad).max(0.0);
                 t.end = t.end.min(duration);
                 t.start = t.start.min(t.end);
             }
