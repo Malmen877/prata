@@ -63,8 +63,9 @@ The measurements were made on a **Linux x86_64 machine** (KVM guest, Intel Xeon 
 15 GB RAM, **CPU only, no GPU**) with default settings. Snabb ran int8 with `--threads 4` and 30 s windows with 5 s of
 context; KB-Whisper ran on the CPU through Candle. The time is the wall time of one `prata` run including model
 loading, with the model already downloaded. The machine was shared, so times are ±15 %. The peak memory is the peak
-RSS of the `prata` process. The Mac column shows Snabb on a Mac mini M4. Snabb runs on the CPU there too (ONNX
-Runtime), while KB-Whisper uses Metal. **The Mac numbers for Standard and Large are coming.**
+RSS of the `prata` process. The Mac column shows a Mac mini M4 (24 GB). Snabb runs on the CPU there too (ONNX
+Runtime), while KB-Whisper uses Metal. On the Mac the memory figure is the peak memory footprint, which for
+KB-Whisper includes the Metal (GPU) buffers.
 
 WER is scored with Prata's Swedish normalisation (lowercase, punctuation removed, Swedish number words and digits
 compare equal, hyphens unified). The first WER column uses the original reference text. That text comes from a 2010
@@ -76,16 +77,15 @@ for those places.
 | Model | Time (x86 CPU) | Peak memory (x86 CPU) | WER | WER (corrected ref) | Mac mini M4 | Notes |
 |---|---:|---:|---:|---:|---|---|
 | **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | 23.9 s wall time (21.7 s transcription), 2.2 GB² | fastest, about 19× faster than Standard here; recommended for long recordings |
-| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | Mac numbers coming (Metal) | **default** |
-| **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | Mac numbers coming (Metal) | largest, slowest; needs a 16 GB+ Mac |
-<!-- TODO(0.6.1-mac): fill the Standard and Large cells of the "Mac mini M4" column (Metal time, peak memory) from Coder's Mac run -->
+| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | 133.7 s, 4.9 GB peak footprint (Metal) | **default** |
+| **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | not measured (clip: 119.5 s, 11.7 GB peak footprint, Metal) | largest, slowest; needs a 16 GB+ Mac |
 
 ¹ Large's peak memory was measured on the 2.5-minute clip with the CPU build (f32). It is much lower on Metal. Large's
 long12 WER comes from a Mac Metal run. Where both runs exist, KB-Whisper's output is byte-identical on the x86 CPU
 build and on Metal, so the WER figures hold for both machines.
 
-² Snabb on the Mac mini M4: the 2.5-minute clip takes 4.2 s with a 1.8 GB peak. A cold run, including loading the
-model, took 28.5 s. The model takes about 660 MB (630 MiB) in the Hugging Face cache.
+² Snabb on the Mac mini M4: the 2.5-minute clip takes 4.2 s with a 1.8 GB peak. The first run, on clip15 (15 s) and
+including the download of the model, took 28.5 s. The model takes about 660 MB (630 MiB) in the Hugging Face cache.
 
 **WER per recording** (original reference, corrected reference in brackets; time on x86 CPU)
 
