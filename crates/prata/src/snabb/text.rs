@@ -216,6 +216,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn word_boundaries_come_only_from_the_model_pieces() {
+        // "OKDacke" on long12: the model emits ▁O K D ac ke (no ▁ before D, same
+        // in onnx-asr and the MLX port), so it is one word; with ▁D it is two.
+        let pieces = ["<unk>", "\u{2581}O", "K", "D", "\u{2581}D", "ac", "ke", "<blk>"];
+        let s: String = pieces.iter().enumerate().map(|(i, p)| format!("{p} {i}\n")).collect();
+        let v = Vocab::parse(&s).unwrap();
+        assert_eq!(text_of(&v, [1, 2, 3, 5, 6]), "OKDacke");
+        assert_eq!(text_of(&v, [1, 2, 4, 5, 6]), "OK Dacke");
+        let ws = words(&v, &[tt(1, 0.0), tt(2, 0.1), tt(4, 0.3), tt(5, 0.4), tt(6, 0.5)]);
+        assert_eq!(ws.len(), 2);
+    }
+
+    #[test]
     fn vocab_parses_blank_and_spaces() {
         let v = tiny_vocab();
         assert_eq!(v.blank, 13);
