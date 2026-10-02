@@ -47,8 +47,7 @@ The web UI offers three models (the CLI and HTTP API also accept `tiny`, `base` 
 |---|---|---|
 | **Snabb** | Klang Pianissimo (`snabb`) | Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar |
 | **Standard** (default) | KB-Whisper small (`small`) | Bästa balansen mellan kvalitet och tid |
-<!-- TODO(0.6.1-numbers) LARGE-DESC: replace with the exact "LARGE DESCRIPTION:" text from Coder's FINAL NUMBERS block -->
-| **Large** | KB-Whisper large (`large`) | Högst kvalitet, långsammast |
+| **Large** | KB-Whisper large (`large`) | Största modellen, långsammast |
 
 `tiny`, `base` and `medium` are hidden in the UI but remain available via the CLI (`--model tiny`), the HTTP API
 (`"model": "medium"`) and `PRATA_MODEL`. Standard stays preselected and Prata never switches models by itself.
@@ -59,20 +58,42 @@ the UI asks the server (`GET /api/model-hint?duration_s=…&model=…`) and show
 The rule lives on the server (`crates/prata-web/src/hint.rs`); there is no hint when this build has no Snabb or the
 duration is unknown.
 
-<!-- TODO(0.6.1-numbers) TABLE: fill from the FINAL NUMBERS block in /workspace/pianissimo-int-status.log -->
-Speed and accuracy on a 12.5-minute Swedish recording (long12) on a Mac mini M4 (TBD: machine details and flags from the
-final measurement). The time is wall time for the whole
-file, and the peak memory is the peak RSS of the `prata` process. WER is scored with Prata's Swedish
-normalisation (lowercase, punctuation removed, Swedish number words and digits compare equal, hyphens unified).
-The first column is scored against the original reference text. The text was taken from a 2010 article, and the
-reader does not follow it word for word in a few places. The second column uses a reference corrected for those places.
+Speed and accuracy of Prata 0.6.1 on three Swedish recordings: long12 (12.5 min), clip (2.5 min) and clip15 (15 s).
+The measurements were made on a **Linux x86_64 machine** (KVM guest, Intel Xeon of the Sapphire Rapids class, 8 vCPU,
+15 GB RAM, **CPU only, no GPU**) with default settings. Snabb ran int8 with `--threads 4` and 30 s windows with 5 s of
+context; KB-Whisper ran on the CPU through Candle. The time is the wall time of one `prata` run including model
+loading, with the model already downloaded. The machine was shared, so times are ±15 %. The peak memory is the peak
+RSS of the `prata` process. **Mac numbers (Apple Silicon, Metal) are coming** and aren't in these tables yet.
 
-| Model | Time | Peak memory | WER | WER (corrected ref) | Notes |
-|---|---:|---:|---:|---:|---|
-| **Snabb** (Klang Pianissimo, ONNX int8, CPU) | TBD | TBD | TBD | TBD | fastest; recommended for long recordings |
-| **Standard** (KB-Whisper small, Metal) | TBD | TBD | TBD | TBD | **default** |
-| **Large** (KB-Whisper large, Metal) | TBD | TBD | TBD | TBD | needs a 16 GB+ Mac |
-<!-- /TODO(0.6.1-numbers) TABLE -->
+WER is scored with Prata's Swedish normalisation (lowercase, punctuation removed, Swedish number words and digits
+compare equal, hyphens unified). The first WER column uses the original reference text. That text comes from a 2010
+article, and the reader doesn't follow it word for word in a few places. The second column uses a reference corrected
+for those places.
+
+**long12 (12.5 min)**
+
+| Model | Time (x86 CPU) | Peak memory (x86 CPU) | WER | WER (corrected ref) | Mac (Metal) | Notes |
+|---|---:|---:|---:|---:|---|---|
+| **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | Mac numbers coming | fastest, about 19× faster than Standard here; recommended for long recordings |
+| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | Mac numbers coming | **default** |
+| **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | Mac numbers coming | largest, slowest; needs a 16 GB+ Mac |
+<!-- TODO(0.6.1-mac): fill the "Mac (Metal)" column (time, peak memory) from Coder's Mac run -->
+
+¹ Large's peak memory was measured on the 2.5-minute clip with the CPU build (f32). It is much lower on Metal. Large's
+long12 WER comes from a Mac Metal run. Where both runs exist, KB-Whisper's output is byte-identical on the x86 CPU
+build and on Metal, so the WER figures hold for both machines.
+
+**WER per recording** (original reference, corrected reference in brackets; time on x86 CPU)
+
+| Recording | Snabb | Standard | Large |
+|---|---|---|---|
+| clip15 (15 s) | 5.56 % (5.56 %), 3.1 s | 2.78 % (2.78 %), 13.8 s | 0.00 % (0.00 %), 63.8 s |
+| clip (2.5 min) | 5.14 % (2.87 %), 9.5 s | 4.29 % (2.01 %), 117.7 s | 4.00 % (1.72 %), 555.9 s |
+| long12 (12.5 min) | 5.26 % (2.99 %), 40.1 s | 4.34 % (2.07 %), 576.1 s | 4.63 % (2.36 %), not timed |
+
+Earlier, before the 0.6.1 Snabb fixes and with an older WER normalisation, a Mac mini M4 transcribed long12 in about
+19 s with Snabb, 132 s with Standard and 595 s with Large. Those figures are from that earlier evaluation, not final
+0.6.1 results.
 
 One recording is not a general accuracy figure; see the model cards for benchmark WERs.
 `scripts/bench-models.sh` reproduces the comparison on your own recordings.
@@ -105,7 +126,7 @@ Measured on an Apple Silicon (M-series) Mac with the Metal build, transcribing 2
 | base | 10 s | 1.0 GB | |
 | **small** | **30 s** | **2.8 GB** | **default**: best speed/quality trade-off |
 | medium | 80 s | 5.8 GB | |
-| large | 137 s | 12.3 GB | best quality; needs a 16 GB+ Mac |
+| large | 137 s | 12.3 GB | largest, slowest; needs a 16 GB+ Mac |
 
 On CPU (Linux x64 build) everything is several times slower; `small` runs at roughly real time on an 8-core machine.
 For accuracy figures (WER) of each size see the [KB-Whisper model card](https://huggingface.co/KBLab/kb-whisper-large).
@@ -232,7 +253,7 @@ Flags override the environment variables below. `PRATA_*` is the primary name; t
 HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `POST /api/jobs/url` (`{"url": "…", "model": "small"}`)
 → `{id}` or `400 {error}` for an invalid/blocked link; `GET /api/jobs/{id}` (status `downloading|queued|converting|running|done|error`,
 `download_pct`, segments, `note_id` when done, `error_user` with a readable message);
-`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info` (includes `default_model` and `models`: id, label,
+`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info` (includes `version`, `default_model` and `models`: id, label,
 description, availability, download size, whether it's downloaded, license); `GET /api/model-hint?duration_s=S&model=M`
 (`{suggest: "snabb"|null, reason}`); `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
 

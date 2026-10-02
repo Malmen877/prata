@@ -4,7 +4,7 @@ All notable changes to Prata (the `prata` CLI, `prata-web` and the `prata-app` n
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] - TBD <!-- TODO(0.6.1-numbers) RELEASE-DATE -->
+## [0.6.1] - 2026-10-02
 
 0.6.1 is the first published release with Snabb. Version 0.6.0 was never released: it has no git tag, no GitHub
 Release and no npm package, so 0.6.1 follows 0.5.1 directly.
@@ -22,8 +22,8 @@ Release and no npm package, so 0.6.1 follows 0.5.1 directly.
 - **Long-recording hint:** for files and recordings over 15 minutes the UI suggests Snabb
   (“Lång inspelning – Snabb går betydligt fortare”). It switches model only when you click it. The rule lives on the
   server: `GET /api/model-hint?duration_s=…&model=…`.
-- `GET /api/info` lists the models with label, description, availability, download size, whether the model is
-  already downloaded, and license.
+- `GET /api/info` reports the `version` and lists the models with label, description, availability, download size,
+  whether the model is already downloaded, and license. Jobs report `model_download_pct` / `model_download_file`.
 - `scripts/bench-models.sh` and `scripts/wer_sv.py` compare models on your own recordings (wall time, peak memory,
   WER with Swedish normalisation).
 - README: models, speed/WER table, Snabb, and credits. NOTICE: KlangAI Pianissimo (CC BY 4.0), its base model NVIDIA
@@ -34,15 +34,24 @@ Release and no npm package, so 0.6.1 follows 0.5.1 directly.
   macOS Intel is built without it.
 - A Snabb job on a build without Snabb fails with a Swedish message. It never falls back to Python or to another
   model.
-- `prata --help` ends with a line saying whether this build includes Snabb.
+- `prata --help` describes both engines, marks the KB-Whisper-only options, and ends with a line saying whether this
+  build includes Snabb. `--revision` has no fixed default: KB-Whisper uses `main`, and Snabb uses the pinned revision
+  it was tested with.
+- The npm launcher's usage text lists `snabb`, and its first-run log line shows the current download sizes.
+- In the UI, Large is described as "Största modellen, långsammast" (short label "störst"). Standard has the lower
+  WER in Prata's tests.
 
 ### Fixed
-- Linux x64: Snabb kept ONNX Runtime from using AMX instructions (seccomp, applied to all threads). On some CPUs
-  under load they produced corrupted int8 output. Set `PRATA_SNABB_AMX=1` to allow AMX. If the filter can't be
-  installed, a warning is logged.
-- Snabb normalises the log-mel features with statistics over the whole file instead of per window. A determinism
-  regression test covers model loading and parallel runs.
-<!-- TODO(0.6.1-numbers) FIXES: add Coder's final Snabb fixes here if they land (seam duplication, dropped first word, "OKDacke" detokenisation) -->
+- Linux x64: Snabb keeps ONNX Runtime off Intel AMX (seccomp, all threads). ONNX Runtime's AMX int8 kernels lose
+  state when the thread is preempted (reproduced in a VM under load), which gave load-dependent, corrupted output.
+  This makes Snabb about 10 % slower on CPUs with AMX. `PRATA_SNABB_AMX=1` re-enables AMX. If seccomp is unavailable,
+  a `[warn]` line is printed and the run continues. macOS and ARM are not affected.
+- Snabb normalises the log-mel features with statistics over the whole recording instead of per window. Per-window
+  statistics broke on digital silence (9–17 % WER).
+- Snabb window seams: a word seen by both windows (a cut inside the word, e.g. "gör gör") is dropped based on
+  timestamp overlap. Genuine repeats such as "Rödeby. Rödeby är" are kept. long12 WER went from 5.49 % to 5.26 %.
+- A determinism regression test (`tests/snabb_determinism.rs`, ignored by default, needs the model) checks that the
+  output is byte-identical with 1, 4 and default threads and with 4 parallel jobs under full CPU load.
 
 ## [0.6.0] - never released
 
