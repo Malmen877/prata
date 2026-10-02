@@ -47,7 +47,7 @@ The web UI offers three models (the CLI and HTTP API also accept `tiny`, `base` 
 |---|---|---|
 | **Snabb** | Klang Pianissimo (`snabb`) | Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar |
 | **Standard** (default) | KB-Whisper small (`small`) | Bästa balansen mellan kvalitet och tid |
-<!-- TODO(0.6.1-numbers) LARGE-DESC: keep "Högst kvalitet, långsammast" only if Large beats Standard on WER; else "Största modellen, långsammast" -->
+<!-- TODO(0.6.1-numbers) LARGE-DESC: replace with the exact "LARGE DESCRIPTION:" text from Coder's FINAL NUMBERS block -->
 | **Large** | KB-Whisper large (`large`) | Högst kvalitet, långsammast |
 
 `tiny`, `base` and `medium` are hidden in the UI but remain available via the CLI (`--model tiny`), the HTTP API
@@ -60,7 +60,8 @@ The rule lives on the server (`crates/prata-web/src/hint.rs`); there is no hint 
 duration is unknown.
 
 <!-- TODO(0.6.1-numbers) TABLE: fill from the FINAL NUMBERS block in /workspace/pianissimo-int-status.log -->
-Speed and accuracy on a 12.5-minute Swedish recording (long12) on a Mac mini M4. The time is wall time for the whole
+Speed and accuracy on a 12.5-minute Swedish recording (long12) on a Mac mini M4 (TBD: machine details and flags from the
+final measurement). The time is wall time for the whole
 file, and the peak memory is the peak RSS of the `prata` process. WER is scored with Prata's Swedish
 normalisation (lowercase, punctuation removed, Swedish number words and digits compare equal, hyphens unified).
 The first column is scored against the original reference text. The text was taken from a 2010 article, and the
