@@ -7,6 +7,7 @@
 //! Job model: POST /api/jobs (multipart) -> {id}; GET /api/jobs/{id} polls status.
 //! Every finished job is saved as a note (see `notes.rs`): /api/notes…
 
+mod fetch;
 mod notes;
 
 use std::{
@@ -14,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -58,6 +59,12 @@ struct Config {
     work_dir: PathBuf,
     notes_dir: PathBuf,
     max_upload_mb: usize,
+    /// Link downloads: size limit (MB), duration limit (s), overall timeout (s)
+    url_max_mb: u64,
+    url_max_duration: u64,
+    url_timeout: u64,
+    /// Explicit yt-dlp path (else found on $PATH)
+    ytdlp: Option<PathBuf>,
 }
 
 /// Read `PRATA_<k>`, falling back to the legacy `KBW_<k>` name.
@@ -117,6 +124,10 @@ impl Config {
                 .unwrap_or_else(|| std::env::temp_dir().join("prata-web")),
             notes_dir: env("NOTES_DIR").map(PathBuf::from).unwrap_or_else(default_notes_dir),
             max_upload_mb: env("MAX_UPLOAD_MB").and_then(|v| v.parse().ok()).unwrap_or(1024),
+            url_max_mb: env("URL_MAX_MB").and_then(|v| v.parse().ok()).filter(|v| *v > 0).unwrap_or(500),
+            url_max_duration: env("URL_MAX_DURATION").and_then(|v| fetch::parse_duration(&v)).unwrap_or(3 * 3600),
+            url_timeout: env("URL_TIMEOUT").and_then(|v| fetch::parse_duration(&v)).unwrap_or(15 * 60),
+            ytdlp: env("YTDLP").map(PathBuf::from),
         }
     }
 }
@@ -133,10 +144,16 @@ fn default_notes_dir() -> PathBuf {
 const USAGE: &str = "prata-web – lokal webbapp för Prata (svensk tal till text)
 
 usage: prata-web [--host ADDR] [--port PORT] [--notes-dir DIR]
+                 [--url-max-mb MB] [--url-max-duration DUR] [--url-timeout DUR] [--yt-dlp PATH]
 
   --host ADDR       listen address (default 127.0.0.1; env PRATA_HOST / PRATA_WEB_HOST)
   --port PORT       listen port (default 8795; env PRATA_WEB_PORT)
   --notes-dir DIR   where saved notes are kept (default ~/.prata/notes; env PRATA_NOTES_DIR)
+  --url-max-mb MB   size limit for links (default 500; env PRATA_URL_MAX_MB)
+  --url-max-duration DUR
+                    duration limit for links, e.g. 3h, 90m, 600 (default 3h; env PRATA_URL_MAX_DURATION)
+  --url-timeout DUR download timeout for links (default 15m; env PRATA_URL_TIMEOUT)
+  --yt-dlp PATH     yt-dlp binary (default: found on PATH; env PRATA_YTDLP)
 
 All other settings are environment variables, see the README.";
 
@@ -153,6 +170,10 @@ fn apply_args(cfg: &mut Config, args: &[String]) -> Result<()> {
             "--host" => cfg.host = val()?,
             "--port" => cfg.port = val()?.parse().context("--port")?,
             "--notes-dir" => cfg.notes_dir = PathBuf::from(val()?),
+            "--url-max-mb" => cfg.url_max_mb = val()?.parse().ok().filter(|v| *v > 0).context("--url-max-mb")?,
+            "--url-max-duration" => cfg.url_max_duration = fetch::parse_duration(&val()?).context("--url-max-duration (t.ex. 3h, 90m)")?,
+            "--url-timeout" => cfg.url_timeout = fetch::parse_duration(&val()?).context("--url-timeout (t.ex. 15m)")?,
+            "--yt-dlp" => cfg.ytdlp = Some(PathBuf::from(val()?)),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -480,8 +501,48 @@ struct Job {
     text: Option<String>,
     /// Saved note (set when the job is done)
     note_id: Option<String>,
+    /// Link jobs: the pasted URL, the media title (yt-dlp) and download progress 0..100
+    source_url: Option<String>,
+    media_title: Option<String>,
+    download_pct: Option<f64>,
+    /// How the link was fetched: "http" or "yt-dlp"
+    fetched_via: Option<String>,
+    /// Error message meant to be shown as is (Swedish)
+    error_user: Option<String>,
     #[serde(skip)]
     started: Option<Instant>,
+    #[serde(skip)]
+    max_duration: Option<f64>,
+}
+
+impl Job {
+    fn new(id: &str, filename: &str, model: &str, status: &str, progress: &str) -> Job {
+        Job {
+            id: id.into(),
+            filename: filename.into(),
+            model: model.into(),
+            status: status.into(),
+            backend: None,
+            backend_cmd: None,
+            output_format: None,
+            progress: progress.into(),
+            log_tail: vec![],
+            error: None,
+            audio_duration: None,
+            created: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            elapsed_s: 0.0,
+            segments: vec![],
+            text: None,
+            note_id: None,
+            source_url: None,
+            media_title: None,
+            download_pct: None,
+            fetched_via: None,
+            error_user: None,
+            started: None,
+            max_duration: None,
+        }
+    }
 }
 
 struct AppState {
@@ -490,6 +551,8 @@ struct AppState {
     jobs: Mutex<HashMap<String, Job>>,
     gate: Semaphore, // one transcription at a time (memory!)
     notes: Store,
+    ytdlp: Mutex<Option<fetch::YtDlp>>,
+    net: fetch::NetPolicy,
 }
 
 type St = Arc<AppState>;
@@ -658,6 +721,13 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
         ffmpeg_to_wav(&input, &wav).await?;
         let dur = wav_duration(&wav).await;
         update(&st, &id, |j| j.audio_duration = Some(dur)).await;
+        let max_dur = st.jobs.lock().await.get(&id).and_then(|j| j.max_duration);
+        if let Some(max) = max_dur {
+            if dur > max + 1.0 {
+                let _ = tokio::fs::remove_file(&wav).await;
+                return Err(fetch::FetchError::TooLong { max_s: max as u64 }.into());
+            }
+        }
 
         let want = st.cfg.backend.as_str();
         let prata_ok = st.prata.lock().await.works;
@@ -683,9 +753,15 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
         let note_id = match job {
             Some(j) => {
                 let created = j.created as i64;
+                let title = j
+                    .media_title
+                    .as_deref()
+                    .and_then(notes::clean_title)
+                    .unwrap_or_else(|| notes::default_title(created, &text));
                 let note = Note {
                     id: id.clone(),
-                    title: notes::default_title(created, &text),
+                    title,
+                    source_url: j.source_url.clone(),
                     created,
                     model: j.model.clone(),
                     audio_duration: dur,
@@ -725,9 +801,11 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
     .await;
     if let Err(e) = res {
         eprintln!("[job {id}] error: {e:#}");
+        let user = e.downcast_ref::<fetch::FetchError>().map(|f| f.message());
         update(&st, &id, |j| {
             j.status = "error".into();
             j.error = Some(format!("{e:#}"));
+            j.error_user = user;
             j.progress = "Fel".into();
         })
         .await;
@@ -761,6 +839,12 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
     }
     let k = probe_prata(&cfg).await;
     *st.prata.lock().await = k.clone();
+    // probe yt-dlp again while it is missing, so `brew install yt-dlp` works without a restart
+    let mut y = st.ytdlp.lock().await.clone();
+    if y.is_none() {
+        y = fetch::probe_ytdlp(st.cfg.ytdlp.clone()).await;
+        *st.ytdlp.lock().await = y.clone();
+    }
     let active = match st.cfg.backend.as_str() {
         "prata" => "prata",
         "python" => "python",
@@ -776,6 +860,7 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
             "script": st.cfg.python_script.as_ref().map(|p| p.display().to_string()),
         },
         "default_model": st.cfg.default_model,
+        "url": url_info(&st.cfg, y.as_ref()),
     }))
 }
 
@@ -820,31 +905,175 @@ async fn create_job(State(st): State<St>, mut mp: Multipart) -> Response {
     if let Err(e) = tokio::fs::write(&input, &bytes).await {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("kunde inte spara filen: {e}"));
     }
-    let created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let job = Job {
-        id: id.clone(),
-        filename: fname.clone(),
-        model: model.clone(),
-        status: "queued".into(),
-        backend: None,
-        backend_cmd: None,
-        output_format: None,
-        progress: "I kö …".into(),
-        log_tail: vec![],
-        error: None,
-        audio_duration: None,
-        created,
-        elapsed_s: 0.0,
-        segments: vec![],
-        text: None,
-        note_id: None,
-        started: None,
-    };
+    let job = Job::new(&id, &fname, &model, "queued", "I kö …");
     st.jobs.lock().await.insert(id.clone(), job);
     eprintln!("[job {id}] queued file={fname:?} bytes={} model={model}", bytes.len());
     tokio::spawn(process_job(st.clone(), id.clone(), input, model));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "status_url": format!("/api/jobs/{id}") })))
         .into_response()
+}
+
+// ---------------------------------------------------------------- link jobs
+
+#[derive(Deserialize)]
+struct UrlReq {
+    url: Option<String>,
+    model: Option<String>,
+}
+
+fn url_limits(cfg: &Config) -> fetch::Limits {
+    fetch::Limits {
+        max_bytes: cfg.url_max_mb * 1024 * 1024,
+        max_duration_s: cfg.url_max_duration,
+        timeout: Duration::from_secs(cfg.url_timeout),
+    }
+}
+
+/// POST /api/jobs/url  {"url": "...", "model": "small"}
+async fn create_url_job(State(st): State<St>, body: Option<Json<UrlReq>>) -> Response {
+    let Some(Json(req)) = body else { return err(StatusCode::BAD_REQUEST, fetch::FetchError::InvalidUrl.message()) };
+    let model = req.model.map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).unwrap_or_else(|| st.cfg.default_model.clone());
+    if !model.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c)) {
+        return err(StatusCode::BAD_REQUEST, "ogiltigt modellnamn");
+    }
+    let url = match fetch::parse_url(req.url.as_deref().unwrap_or("")) {
+        Ok(u) => u,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e.message()),
+    };
+    // Early, friendly rejection of local/private targets (checked again at connect time).
+    if let Err(e) = fetch::check_host(&url, st.net).await {
+        return err(StatusCode::BAD_REQUEST, e.message());
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+    let label = url.host_str().unwrap_or("länk").to_string();
+    let mut job = Job::new(&id, &label, &model, "downloading", "Laddar ner …");
+    job.source_url = Some(url.to_string());
+    job.max_duration = Some(st.cfg.url_max_duration as f64);
+    job.started = Some(Instant::now());
+    st.jobs.lock().await.insert(id.clone(), job);
+    eprintln!("[job {id}] queued url host={label:?} model={model}");
+    tokio::spawn(url_job(st.clone(), id.clone(), url, model));
+    (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "status_url": format!("/api/jobs/{id}") })))
+        .into_response()
+}
+
+async fn url_job(st: St, id: String, url: url::Url, model: String) {
+    let dir = st.cfg.work_dir.join(format!("{id}-dl"));
+    let limits = url_limits(&st.cfg);
+    let res = tokio::time::timeout(limits.timeout, fetch_url(&st, &id, &url, &dir, &limits)).await;
+    let res = match res {
+        Ok(r) => r,
+        Err(_) => Err(fetch::FetchError::Timeout { secs: limits.timeout.as_secs() }),
+    };
+    match res {
+        Ok(d) => {
+            let ext = notes::clean_ext(&d.path.to_string_lossy());
+            let input = st.cfg.work_dir.join(format!("{id}.{ext}"));
+            let moved = tokio::fs::rename(&d.path, &input).await;
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            if let Err(e) = moved {
+                return url_failed(&st, &id, fetch::FetchError::Other(e.to_string())).await;
+            }
+            let bytes = tokio::fs::metadata(&input).await.map(|m| m.len()).unwrap_or(0);
+            eprintln!("[job {id}] downloaded via {} bytes={bytes}", d.via);
+            update(&st, &id, |j| {
+                j.filename = d.filename.clone();
+                j.media_title = d.title.clone();
+                j.fetched_via = Some(d.via.into());
+                j.download_pct = Some(100.0);
+                j.status = "queued".into();
+                j.progress = "I kö …".into();
+            })
+            .await;
+            process_job(st, id, input, model).await;
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+            url_failed(&st, &id, e).await;
+        }
+    }
+}
+
+async fn url_failed(st: &St, id: &str, e: fetch::FetchError) {
+    eprintln!("[job {id}] link error: {e:?}");
+    update(st, id, |j| {
+        j.status = "error".into();
+        j.error = Some(e.message());
+        j.error_user = Some(e.message());
+        j.progress = "Fel".into();
+    })
+    .await;
+}
+
+async fn fetch_url(st: &St, id: &str, url: &url::Url, dir: &Path, limits: &fetch::Limits) -> Result<fetch::Downloaded, fetch::FetchError> {
+    tokio::fs::create_dir_all(dir).await.map_err(|e| fetch::FetchError::Other(e.to_string()))?;
+    // progress updates from sync callbacks: keep the latest value and publish it from here
+    let pct = Arc::new(std::sync::Mutex::new(None::<f64>));
+    let publisher = {
+        let (st, id, pct) = (st.clone(), id.to_string(), pct.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                let p = *pct.lock().unwrap();
+                update(&st, &id, |j| {
+                    if j.status == "downloading" {
+                        j.download_pct = p;
+                        j.progress = match p {
+                            Some(p) => format!("Laddar ner … {p:.0} %"),
+                            None => "Laddar ner …".into(),
+                        };
+                    }
+                })
+                .await;
+            }
+        })
+    };
+    let r = async {
+        let p1 = pct.clone();
+        let direct = fetch::direct_download(url, dir, limits, st.net, move |done, total| {
+            *p1.lock().unwrap() = total.filter(|t| *t > 0).map(|t| (done as f64 / t as f64 * 100.0).min(100.0));
+        })
+        .await?;
+        let (status, html) = match direct {
+            fetch::Direct::Media(d) => return Ok(d),
+            fetch::Direct::NotMedia { status, html } => (status, html),
+        };
+        let y = st.ytdlp.lock().await.clone();
+        let Some(y) = y else {
+            return Err(match (status, html) {
+                (Some(code), _) => fetch::FetchError::Http(code),
+                (None, true) => fetch::FetchError::ToolMissing,
+                (None, false) => fetch::FetchError::NotMedia,
+            });
+        };
+        update(st, id, |j| j.log_tail.push(format!("hämtar med yt-dlp {}", y.version))).await;
+        let p2 = pct.clone();
+        fetch::ytdlp_download(&y, url, dir, limits, move |p| *p2.lock().unwrap() = Some(p)).await
+    }
+    .await;
+    publisher.abort();
+    r
+}
+
+async fn health(State(st): State<St>) -> Json<serde_json::Value> {
+    let y = st.ytdlp.lock().await.clone();
+    Json(serde_json::json!({
+        "ok": true,
+        "prata": st.prata.lock().await.works,
+        "ffmpeg": which("ffmpeg").is_some(),
+        "yt_dlp": y.as_ref().map(|y| serde_json::json!({"available": true, "version": y.version}))
+            .unwrap_or(serde_json::json!({"available": false})),
+    }))
+}
+
+fn url_info(cfg: &Config, y: Option<&fetch::YtDlp>) -> serde_json::Value {
+    serde_json::json!({
+        "yt_dlp": y.is_some(),
+        "yt_dlp_version": y.map(|y| y.version.clone()),
+        "max_mb": cfg.url_max_mb,
+        "max_duration_s": cfg.url_max_duration,
+        "timeout_s": cfg.url_timeout,
+    })
 }
 
 async fn get_job(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
@@ -1049,7 +1278,9 @@ fn app(st: St) -> Router {
         .route("/icon-512.png", get(icon_512))
         .route("/icon-maskable-512.png", get(icon_maskable))
         .route("/api/info", get(info))
+        .route("/api/health", get(health))
         .route("/api/jobs", post(create_job))
+        .route("/api/jobs/url", post(create_url_job))
         .route("/api/jobs/{id}", get(get_job))
         .route("/api/jobs/{id}/txt", get(dl_txt))
         .route("/api/jobs/{id}/txt-ts", get(dl_txt_ts))
@@ -1061,6 +1292,18 @@ fn app(st: St) -> Router {
         .route("/api/notes/{id}/{kind}", get(note_download))
         .layer(DefaultBodyLimit::max(limit))
         .with_state(st)
+}
+
+/// Address policy for link downloads. Always strict, except in a binary built with the
+/// `insecure-test-loopback` feature *and* started with PRATA_INSECURE_ALLOW_LOOPBACK=1
+/// (used only by the end-to-end tests against a local mock server).
+fn net_policy() -> fetch::NetPolicy {
+    #[cfg(feature = "insecure-test-loopback")]
+    if std::env::var("PRATA_INSECURE_ALLOW_LOOPBACK").as_deref() == Ok("1") {
+        eprintln!("WARNING: test build – link downloads may reach 127.0.0.1/::1 (PRATA_INSECURE_ALLOW_LOOPBACK=1). Never use this build in production.");
+        return fetch::NetPolicy::allow_loopback_for_tests();
+    }
+    fetch::NetPolicy::strict()
 }
 
 #[tokio::main]
@@ -1089,12 +1332,19 @@ async fn main() -> Result<()> {
              For Tailscale, prefer the default 127.0.0.1 with `tailscale serve`."
         );
     }
+    let ytdlp = fetch::probe_ytdlp(cfg.ytdlp.clone()).await;
+    match &ytdlp {
+        Some(y) => eprintln!("yt-dlp: {} ({})", y.version, y.path.display()),
+        None => eprintln!("yt-dlp: not found – links to web pages (YouTube …) need it: brew install yt-dlp; direct audio/video links still work"),
+    }
     let st: St = Arc::new(AppState {
         cfg,
         prata: Mutex::new(prata),
         jobs: Mutex::new(HashMap::new()),
         gate: Semaphore::new(1),
         notes: store,
+        ytdlp: Mutex::new(ytdlp),
+        net: net_policy(),
     });
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("bind {addr}"))?;
     eprintln!("prata-web listening on http://{addr}");
@@ -1108,7 +1358,12 @@ mod api_tests {
     use http_body_util::BodyExt;
 
     fn state(dir: &Path) -> St {
+        state_with(dir, fetch::NetPolicy::strict(), |_| {})
+    }
+
+    fn state_with(dir: &Path, net: fetch::NetPolicy, tweak: impl FnOnce(&mut Config)) -> St {
         let mut cfg = Config::from_env();
+        tweak(&mut cfg);
         cfg.notes_dir = dir.join("notes");
         cfg.work_dir = dir.join("work");
         std::fs::create_dir_all(&cfg.work_dir).unwrap();
@@ -1118,7 +1373,128 @@ mod api_tests {
             prata: Mutex::new(PrataInfo::default()),
             jobs: Mutex::new(HashMap::new()),
             gate: Semaphore::new(1),
+            ytdlp: Mutex::new(None),
+            net,
         })
+    }
+
+    async fn wait_job(app: &Router, id: &str) -> serde_json::Value {
+        for _ in 0..300 {
+            let (_, _, b) = call(app, "GET", &format!("/api/jobs/{id}"), None, None).await;
+            let j: serde_json::Value = serde_json::from_slice(&b).unwrap();
+            if j["status"] == "error" || j["status"] == "done" {
+                return j;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("job {id} did not finish");
+    }
+
+    #[tokio::test]
+    async fn url_endpoint_validation_and_ssrf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = app(state(tmp.path()));
+        let post = |v: serde_json::Value| {
+            let app = app.clone();
+            async move {
+                let (c, _, b) = call(&app, "POST", "/api/jobs/url", Some(v), None).await;
+                (c, serde_json::from_slice::<serde_json::Value>(&b).unwrap_or_default()["error"].as_str().unwrap_or("").to_string())
+            }
+        };
+        for (u, want) in [
+            ("", "Ogiltig länk"),
+            ("not a url", "Ogiltig länk"),
+            ("ftp://example.com/a.mp3", "Ogiltig länk"),
+            ("file:///etc/passwd", "Ogiltig länk"),
+            ("https://user:pw@example.com/a.mp3", "Ogiltig länk"),
+            ("http://127.0.0.1:8795/api/notes", "lokal eller privat"),
+            ("http://localhost:8795/", "lokal eller privat"),
+            ("http://[::1]/", "lokal eller privat"),
+            ("http://169.254.169.254/latest/meta-data/", "lokal eller privat"),
+            ("http://100.100.100.100/", "lokal eller privat"),
+            ("http://192.168.1.1/a.mp3", "lokal eller privat"),
+            ("http://[fd00::1]/a.mp3", "lokal eller privat"),
+            ("http://2130706433/", "lokal eller privat"),
+        ] {
+            let (c, e) = post(serde_json::json!({ "url": u })).await;
+            assert_eq!(c, StatusCode::BAD_REQUEST, "{u}");
+            assert!(e.contains(want), "{u}: {e}");
+        }
+        let (c, _) = post(serde_json::json!({ "url": "https://example.com/a.mp3", "model": "x; rm -rf /" })).await;
+        assert_eq!(c, StatusCode::BAD_REQUEST);
+        let (c, _, _) = call(&app, "POST", "/api/jobs/url", None, None).await;
+        assert!(c.is_client_error());
+        // nothing was queued
+        let (_, _, b) = call(&app, "GET", "/api/health", None, None).await;
+        let h: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(h["ok"], true);
+        assert!(h["yt_dlp"]["available"].is_boolean());
+    }
+
+    #[tokio::test]
+    async fn url_job_downloads_from_mock_and_enforces_limits() {
+        let base = fetch::tests::mock_server().await;
+        let tmp = tempfile::tempdir().unwrap();
+        // duration limit 1 s: the 3 s clip is downloaded and converted, then refused
+        let st = state_with(tmp.path(), fetch::NetPolicy::allow_loopback_for_tests(), |c| c.url_max_duration = 1);
+        let app = app(st.clone());
+        let (c, _, b) = call(&app, "POST", "/api/jobs/url", Some(serde_json::json!({ "url": format!("{base}/clip.wav") })), None).await;
+        assert_eq!(c, StatusCode::ACCEPTED);
+        let id = serde_json::from_slice::<serde_json::Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+        let j = wait_job(&app, &id).await;
+        assert_eq!(j["source_url"], format!("{base}/clip.wav"));
+        assert_eq!(j["fetched_via"], "http");
+        assert_eq!(j["filename"], "clip.wav");
+        if which("ffmpeg").is_some() {
+            assert_eq!(j["error_user"], "Ljudet är för långt. Gränsen är 1 s.", "{j}");
+        }
+        // temp files are gone
+        let left: Vec<_> = std::fs::read_dir(&st.cfg.work_dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(left.is_empty(), "{left:?}");
+
+        // a web page without yt-dlp → clear hint; HTTP errors are reported
+        for (path, want) in [("/page.html", "kräver yt-dlp"), ("/missing.wav", "fel 404"), ("/data.json", "inte på en ljud")] {
+            let (_, _, b) = call(&app, "POST", "/api/jobs/url", Some(serde_json::json!({ "url": format!("{base}{path}") })), None).await;
+            let id = serde_json::from_slice::<serde_json::Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+            let j = wait_job(&app, &id).await;
+            assert!(j["error_user"].as_str().unwrap().contains(want), "{path}: {j}");
+        }
+        // size limit
+        let st = state_with(tmp.path(), fetch::NetPolicy::allow_loopback_for_tests(), |c| c.url_max_mb = 1);
+        let app = super::app(st);
+        let (_, _, b) = call(&app, "POST", "/api/jobs/url", Some(serde_json::json!({ "url": format!("{base}/big.wav") })), None).await;
+        let id = serde_json::from_slice::<serde_json::Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+        assert_eq!(wait_job(&app, &id).await["error_user"], "Filen är för stor. Gränsen är 1 MB.");
+        // overall timeout
+        let st = state_with(tmp.path(), fetch::NetPolicy::allow_loopback_for_tests(), |c| c.url_timeout = 1);
+        let app = super::app(st);
+        let (_, _, b) = call(&app, "POST", "/api/jobs/url", Some(serde_json::json!({ "url": format!("{base}/slow.wav") })), None).await;
+        let id = serde_json::from_slice::<serde_json::Value>(&b).unwrap()["id"].as_str().unwrap().to_string();
+        assert_eq!(wait_job(&app, &id).await["error_user"], "Nedladdningen tog för lång tid (mer än 1 s) och avbröts.");
+    }
+
+    #[tokio::test]
+    async fn source_url_is_stored_and_old_notes_still_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path());
+        let mut n = note("cccc3333", 3000, "Från en länk");
+        n.source_url = Some("https://example.com/podd.mp3".into());
+        st.notes.create(n, None).unwrap();
+        // an old note.json (v0.3.0) without the field
+        let old = tmp.path().join("notes/dddd4444");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("note.json"), r#"{"id":"dddd4444","title":"Gammal","created":10,"model":"small","audio_duration":1.0,"filename":"a.m4a","segments":[]}"#).unwrap();
+        let st = state(tmp.path());
+        let app = app(st);
+        let (_, _, b) = call(&app, "GET", "/api/notes/cccc3333", None, None).await;
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(v["source_url"], "https://example.com/podd.mp3");
+        let (c, _, b) = call(&app, "GET", "/api/notes/dddd4444", None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert!(v.get("source_url").is_none() || v["source_url"].is_null());
+        let json = std::fs::read_to_string(tmp.path().join("notes/dddd4444/note.json")).unwrap();
+        assert!(!json.contains("source_url"));
     }
 
     fn note(id: &str, created: i64, text: &str) -> Note {
@@ -1132,6 +1508,7 @@ mod api_tests {
             audio: None,
             audio_bytes: 0,
             backend: None,
+            source_url: None,
             segments: vec![
                 Segment { start: 0.0, end: 1.0, text: text.into() },
                 Segment { start: 1.0, end: 2.0, text: "Slut.".into() },
@@ -1258,9 +1635,11 @@ mod api_tests {
         for needle in ["rel=\"manifest\"", "apple-touch-icon", "apple-mobile-web-app-capable", "theme-color", "viewport-fit=cover"] {
             assert!(html.contains(needle), "{needle}");
         }
-        // the only absolute URL allowed is the SVG namespace inside data: URIs (not a request)
-        let stripped = html.replace("http://www.w3.org/2000/svg", "");
-        assert!(!stripped.contains("http://") && !stripped.contains("https://") && !stripped.contains("//cdn"), "no external requests");
+        // nothing that would make the browser load something from elsewhere
+        let lower = html.to_ascii_lowercase().replace(' ', "");
+        for bad in ["src=\"http", "src='http", "href=\"http", "href='http", "url(http", "url(\"http", "url('http", "@import", "fetch(\"http", "fetch('http", "//cdn", "src=\"//", "href=\"//"] {
+            assert!(!lower.contains(bad), "no external requests: {bad}");
+        }
     }
 
     #[test]

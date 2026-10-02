@@ -22,7 +22,16 @@ uuid = { version = "1", features = ["v4"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# link downloads (same versions hf-hub already pulls in): rustls, no system proxy
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2"] }
+url = "2"
+
+[features]
+# Lets link downloads reach 127.0.0.1/::1 when PRATA_INSECURE_ALLOW_LOOPBACK=1 is also set.
+# Only for the end-to-end tests against a local mock server; never enable it in release builds.
+insecure-test-loopback = []
 
 [dev-dependencies]
 tempfile = "3"
 http-body-util = "0.1"
+futures-util = "0.3"

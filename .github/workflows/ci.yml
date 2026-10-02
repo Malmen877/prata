@@ -28,8 +28,16 @@ jobs:
         run: |
           cargo build --release --locked -p prata ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
           cargo build --release --locked -p prata-web
+      - name: Test tools (ffmpeg, yt-dlp) for the link tests
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 -m pip install --user --break-system-packages yt-dlp || python3 -m pip install --user yt-dlp
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Test
         run: cargo test --release --locked --workspace
+      - name: Release build must not contain the test-only loopback switch
+        run: "! grep -q PRATA_INSECURE_ALLOW_LOOPBACK target/release/prata-web"
       - name: Package (dry run)
         run: scripts/package.sh ci-${{ runner.os }}
 

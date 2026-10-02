@@ -52,6 +52,10 @@ pub struct Note {
     #[serde(default)]
     pub backend: Option<String>,
     pub segments: Vec<Segment>,
+    /// Link the audio was downloaded from (notes made from a URL). Older note.json files
+    /// don't have it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
 }
 
 impl Note {
@@ -375,6 +379,7 @@ mod tests {
             audio: None,
             audio_bytes: 0,
             backend: None,
+            source_url: None,
             segments: vec![Segment { start: 0.0, end: 3.5, text: text.into() }],
         }
     }
