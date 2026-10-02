@@ -1,8 +1,8 @@
 {
   "name": "prata-app",
   "version": "0.6.1",
-  "description": "Prata – local Swedish speech-to-text in your browser. Downloads the prebuilt Prata binaries and starts the web UI.",
-  "keywords": ["speech-to-text", "swedish", "svenska", "whisper", "transcription", "local", "offline"],
+  "description": "Prata – local, private Swedish speech-to-text in your browser (KB-Whisper and Klang Pianissimo). Downloads the prebuilt Prata binaries and starts the web UI.",
+  "keywords": ["speech-to-text", "swedish", "svenska", "transcription", "whisper", "kb-whisper", "parakeet", "pianissimo", "asr", "local", "offline"],
   "license": "MIT",
   "author": "Kevin Malmgren",
   "homepage": "https://github.com/Malmen877/prata#readme",
