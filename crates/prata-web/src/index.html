@@ -530,11 +530,10 @@ async function loadInfo() {
 }
 
 // ------------------------------------------------------------ model picker (drives hidden/compact <select id="model">)
-// The server decides what the picker shows (contract v3): /api/info.picker = ordered ids, e.g.
-// ["snabb","small","large"], and /api/info.models[] = {id,label,description,available,unsupported_reason,
-// downloaded,size_bytes,license}. The UI only renders it. Older servers without `picker` get the
-// fallback below (Standard + Large, plus Snabb if listed). tiny/base/medium are never offered here but
-// keep working via CLI/API.
+// Picker: Snabb, Standard (small, default), Large. /api/info.models[] = {id,label,description,available,
+// unsupported_reason,downloaded,size_bytes,license} supplies labels and availability. If the server also
+// sends /api/info.picker (ordered ids) that order is used as is; otherwise the UI shows Snabb (only if
+// listed), small and large. tiny/base/medium are never offered here but keep working via CLI/API.
 const DEFAULT_MODEL = "small";
 const FALLBACK = {   // used only when the server sends no label/description
   snabb: ["Snabb", "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar"],
@@ -603,19 +602,28 @@ function modelInfoShow(m) {
 }
 $("model").onchange = e => setModel(e.target.value);
 
-// Long-recording hint. The rule lives on the server: POST /api/model-hint {model, duration_s}
-// → {hint: null | {text, suggest_model, threshold_s}}. Shown discreetly; switches only on click.
+// Long-recording hint. The rule lives on the server (contract v4, crates/prata-web/src/hint.rs):
+//   GET /api/model-hint?duration_s=<s>&model=<id> → {suggest: "snabb"|null, reason: "<Swedish>"}
+// (a {hint: {text, suggest_model}} body is accepted too). Shown discreetly; switches only on click;
+// any error or unknown duration → no hint.
+const HINT_TEXT = "Lång inspelning – Snabb går betydligt fortare";
 let hintDur = null, hintObj = null, hintSeq = 0;
 function hintFor(dur) { hintDur = dur; hintRefresh(); }
+function hintParse(b) {
+  if (!b) return null;
+  if (b.hint && b.hint.text) return { text: b.hint.text, suggest_model: b.hint.suggest_model || null };
+  if (b.suggest) return { text: (b.reason || "").trim() || HINT_TEXT, suggest_model: b.suggest };
+  return null;
+}
 async function hintRefresh() {
   const seq = ++hintSeq, model = $("model").value, dur = hintDur;
   if (dur == null || !(dur > 0)) return hintShow(null);
   let h = null;
   try {
-    const r = await fetch("/api/model-hint", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model, duration_s: Math.round(dur) }) });
-    if (r.ok) h = (await r.json()).hint || null;
+    const r = await fetch(`/api/model-hint?duration_s=${Math.round(dur)}&model=${encodeURIComponent(model)}`);
+    if (r.ok) h = hintParse(await r.json());
   } catch (_) {}
-  if (seq === hintSeq) hintShow(h);   // fail silently: no hint
+  if (seq === hintSeq) hintShow(h);
 }
 function hintShow(h) {
   hintObj = h && h.text ? h : null;
@@ -895,7 +903,8 @@ async function poll() {
   if (j.model_download_pct != null && j.status === "running") modelPhase = "model";
   const phaseText = j.phase_text || (modelPhase === "model" ? modelDlText(j.model) : STATUS[j.status] || j.status);
   $("statusText").textContent = phaseText;
-  const jh = $("jobHint"); jh.textContent = j.hint && j.hint.text ? j.hint.text : ""; jh.classList.toggle("hidden", !(j.hint && j.hint.text) || j.status === "done");
+  const jhint = j.hint && j.hint.text ? j.hint.text : "";   // optional: if the server adds a hint to the job
+  const jh = $("jobHint"); jh.textContent = jhint; jh.classList.toggle("hidden", !jhint || j.status === "done");
   $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
   $("elapsed").textContent = `${Math.round(j.elapsed_s)} s · ${modelLabel(j.model)}`;
   setSteps(j.status); setBar(curPct);
