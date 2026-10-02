@@ -225,6 +225,30 @@ header .brand{text-decoration:none;color:var(--ink);min-height:44px}
 .ni-snip{font-size:13.5px;color:var(--ink-2);margin-top:6px;line-height:1.45;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .day-h{font-size:12.5px;font-weight:600;color:var(--ink-2);letter-spacing:.01em;margin:12px 0 0;padding:4px 4px 2px;position:sticky;top:0;z-index:1;background:var(--bg)}
 .day-h:first-child{margin-top:0}
+.badge{display:inline-block;vertical-align:1px;margin-left:6px;padding:1px 7px;border-radius:var(--r-pill);font-size:11px;font-weight:600;letter-spacing:.02em;line-height:16px;color:var(--ink-2);background:var(--surface-2);border:1px solid var(--line)}
+.klang-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:10px 0 2px}
+.klang-bar .btn[disabled]{opacity:.6;cursor:progress}
+.klang-bar .btn.busy svg{animation:spin 1.1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.klang-bar .btn.busy svg{animation:none}}
+.klang-msg{font-size:13px;color:var(--ink-2);line-height:1.4;min-width:0}
+.klang-msg.err{color:var(--err)}
+.summary{margin:0;padding:18px 24px 18px;border-bottom:1px solid var(--line)}
+.md li.task{list-style:none;margin-left:-20px}
+.summary h3{font-size:13px;font-weight:600;color:var(--ink-2);margin:0 0 8px;letter-spacing:.01em}
+.md{font-size:15px;line-height:1.55;color:var(--ink);overflow-wrap:anywhere}
+.md>:first-child{margin-top:0}.md>:last-child{margin-bottom:0}
+.md p,.md ul,.md ol,.md blockquote{margin:0 0 10px}
+.md ul,.md ol{padding-left:22px}
+.md li{margin:2px 0}
+.md .md-h{font-size:15.5px;font-weight:600;margin:14px 0 6px}
+.md .md-h1{font-size:17px}
+.md code{font-family:var(--mono,ui-monospace,monospace);font-size:.9em;background:var(--surface-2);padding:1px 5px;border-radius:5px}
+.md blockquote{border-left:3px solid var(--line-strong);padding-left:12px;color:var(--ink-2)}
+.md hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+.md a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.seg-row .ts.static{cursor:default;pointer-events:none;color:var(--ink-3)}
+.seg-row.untimed{grid-template-columns:1fr auto}
 .list-empty{padding:28px 16px;text-align:center;color:var(--ink-3);font-size:14px;border:1.5px dashed var(--line-strong);border-radius:var(--r-md)}
 .note-pane{min-width:0}
 .back{display:none;align-items:center;gap:4px;height:44px;margin:-8px 0 4px -6px;padding:0 8px;border-radius:var(--r-pill);font-size:15px;font-weight:500;color:var(--ink-2);text-decoration:none}
@@ -390,6 +414,10 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
   <div class="notes-layout" id="notesLayout">
     <aside class="list-pane" aria-label="Alla anteckningar">
       <div class="list-head"><h2>Anteckningar</h2><span class="meta" id="listMeta"></span></div>
+      <div class="klang-bar hidden" id="klangBar">
+        <button type="button" class="btn" id="klangSync"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/></svg><span id="klangLabel">Synka från Klang</span></button>
+        <span class="klang-msg" id="klangMsg" role="status" aria-live="polite"></span>
+      </div>
       <label class="search big"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <span class="sr-only">Sök i alla anteckningar</span><input type="search" id="noteSearch" placeholder="Sök i alla anteckningar" autocomplete="off" enterkeyhint="search"></label>
       <div class="note-list" id="noteList" aria-live="polite"></div>
@@ -428,6 +456,10 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       <span class="t" id="ptime">00:00 / 00:00</span>
     </div>
     <div class="meta hidden" id="noAudio" style="padding:14px 24px;border-bottom:1px solid var(--line)">Ljudet kan inte spelas upp i den här webbläsaren – tidsstämplarna och nedladdningarna fungerar ändå.</div>
+    <section class="summary hidden" id="summarySec" aria-labelledby="sumH">
+      <h3 id="sumH">Sammanfattning <span class="badge">Klang</span></h3>
+      <div class="md" id="summaryBody"></div>
+    </section>
     <div class="tools">
       <label class="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <span class="sr-only">Sök i texten</span><input type="search" id="search" placeholder="Sök i texten" autocomplete="off" aria-describedby="hits"></label>
@@ -481,6 +513,7 @@ async function loadInfo() {
     const i = await (await fetch("/api/info")).json();
     if (i.default_model) setModel(i.default_model);
     urlInfo = i.url || null; linkHint();
+    klangSetup(i.klang_enabled === true);
   } catch (_) {}
 }
 
@@ -759,15 +792,27 @@ function render(n, q) {
   curNote = n; lastJob = n; segData = n.segments || []; activeIdx = -1;
   $("resTitle").textContent = n.title; $("resTitle").title = "Tryck för att byta namn";
   closeRename();
-  $("meta").textContent = [DATED.test(n.title) ? "" : fmtDate(n.created), fmtShort(n.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + n.model].filter(Boolean).join(" · ");
+  const klang = n.source === "klang", timed = n.timed !== false;
+  $("meta").textContent = (klang
+    ? [DATED.test(n.title) ? "" : fmtDate(n.created), n.audio_duration ? fmtShort(n.audio_duration) + " samtal" : "", wordCount(segData) + " ord", "från Klang"]
+    : [DATED.test(n.title) ? "" : fmtDate(n.created), fmtShort(n.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + n.model]).filter(Boolean).join(" · ");
   const base = `/api/notes/${n.id}/`, stem = safeStem(n.title);
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
+  // no audio: no subtitles; untimed transcripts: no "med tider" either
+  $("dlSrt").classList.toggle("hidden", klang && !n.has_audio || !timed);
+  $("dlTxtTs").classList.toggle("hidden", !timed);
+  showSummary(klang ? n.summary : null);
   $("delBtn").classList.remove("hidden"); $("renameBtn").classList.remove("hidden");
   showSource(n.source_url);
   $("search").value = q || ""; renderSegs(q || "");
   $("resultCard").classList.remove("hidden"); $("notePlaceholder").classList.add("hidden");
-  loadMedia(n.has_audio ? base + "audio" : null, localBlobs.get(n.id), n.audio_bytes, n.audio_duration);
+  loadMedia(n.has_audio ? base + "audio" : null, localBlobs.get(n.id), n.audio_bytes, n.audio_duration, klang);
+}
+function showSummary(md) {
+  const has = typeof md === "string" && md.trim() !== "";
+  $("summarySec").classList.toggle("hidden", !has);
+  $("summaryBody").innerHTML = has ? mdToHtml(md) : "";
 }
 function showSource(u) {
   const a = $("srcLink");
@@ -786,6 +831,7 @@ function showJobResult(j) {
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
   $("delBtn").classList.add("hidden"); $("renameBtn").classList.add("hidden");
+  $("dlSrt").classList.remove("hidden"); $("dlTxtTs").classList.remove("hidden"); showSummary(null);
   showSource(j.source_url);
   $("search").value = ""; renderSegs("");
   $("notesLayout").classList.add("has-note");
@@ -806,9 +852,13 @@ function renderSegs(q) {
   if (!segData.length || segData.every(s => !s.text.trim())) {
     segs.innerHTML = '<div class="seg-row none">(ingen text hittades i ljudet)</div>';
   } else {
+    const playable = !(curNote && curNote.source === "klang" && !curNote.has_audio);
+    const timed = !curNote || curNote.timed !== false;
     segs.innerHTML = segData.map((s, i) =>
-      `<div class="seg-row${i === activeIdx ? " active" : ""}" data-i="${i}">` +
-      `<button type="button" class="ts" data-i="${i}" title="${fmt(s.start)} – ${fmt(s.end)}" aria-label="Spela från ${fmt(s.start)}">${fmt(s.start)}</button>` +
+      `<div class="seg-row${i === activeIdx ? " active" : ""}${timed ? "" : " untimed"}" data-i="${i}">` +
+      (!timed ? "" : playable
+        ? `<button type="button" class="ts" data-i="${i}" title="${fmt(s.start)} – ${fmt(s.end)}" aria-label="Spela från ${fmt(s.start)}">${fmt(s.start)}</button>`
+        : `<span class="ts static" title="${fmt(s.start)} – ${fmt(s.end)}">${fmt(s.start)}</span>`) +
       `<p>${highlight(s.text.trim(), q)}</p>` +
       `<button type="button" class="cp" data-i="${i}" aria-label="Kopiera segmentet">Kopiera</button></div>`).join("");
   }
@@ -878,14 +928,15 @@ function drawScrub() {
   scrub.setAttribute("aria-valuetext", `${fmtShort(audio.currentTime)} av ${fmtShort(d)}`);
 }
 // url: server audio (Range-capable, used for playback); blob: local copy for the waveform
-async function loadMedia(url, blob, bytes, noteDur) {
+async function loadMedia(url, blob, bytes, noteDur, noPlayer) {
   const token = ++decodeToken;
   audio.pause();
   if (mediaUrl) { URL.revokeObjectURL(mediaUrl); mediaUrl = null; }
   audio.removeAttribute("src"); audio.load();
   peaks = null; mediaDur = noteDur || 0;
   const src = url || (blob ? (mediaUrl = URL.createObjectURL(blob)) : null);
-  $("playerBar").classList.toggle("hidden", !src); $("noAudio").classList.toggle("hidden", !!src);
+  // imported notes (Klang) never had audio: no player and no "can't play" notice
+  $("playerBar").classList.toggle("hidden", !src); $("noAudio").classList.toggle("hidden", !!src || !!noPlayer);
   if (!src) return;
   audio.src = src; audio.load();   // preload=metadata; never autoplays
   scrub.classList.remove("hidden"); audio.classList.add("hidden"); audio.controls = false;
@@ -1120,6 +1171,84 @@ function hlTerms(text, q) {
   }
   return out + (on ? "</mark>" : "");
 }
+// --- markdown:start (safe subset for Klang summaries: input is escaped first, no raw HTML; also unit-tested)
+function mdInline(t) {
+  t = String(t).replace(/\u0000/g, "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const keep = [], hold = h => { keep.push(h); return "\u0000" + (keep.length - 1) + "\u0000"; };
+  const emph = x => x.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, (_, a, b) => `<strong>${a || b}</strong>`)
+    .replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\*)/g, "$1<em>$2</em>").replace(/(^|[^_\w])_([^_\s][^_]*)_(?!\w)/g, "$1<em>$2</em>");
+  t = t.replace(/`([^`]+)`/g, (_, c) => hold(`<code>${c}</code>`));
+  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (all, label, url) =>
+    /^(https?:\/\/|mailto:)/i.test(url) ? hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${emph(label)}</a>`) : label);
+  t = t.replace(/\bhttps?:\/\/[^\s<]+[^\s<.,;:!?)]/g, u => hold(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`));
+  t = emph(t);
+  for (let i = 0; i < 3 && t.includes("\u0000"); i++) t = t.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]);
+  return t;
+}
+function mdToHtml(src) {
+  const lines = String(src || "").replace(/\r\n?/g, "\n").split("\n"), out = [];
+  let para = [], list = null;
+  const flushP = () => { if (para.length) { out.push("<p>" + para.map(mdInline).join("<br>") + "</p>"); para = []; } };
+  const flushL = () => { if (list) { out.push(`<${list.tag}>` + list.items.map(i => `<li${i.task ? ' class="task"' : ""}>${i.html}</li>`).join("") + `</${list.tag}>`); list = null; } };
+  for (const raw of lines) {
+    const l = raw.trimEnd(), t = l.trim();
+    let m;
+    if (!t) { flushP(); flushL(); continue; }
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(t))) { flushP(); flushL(); out.push(`<h4 class="md-h md-h${m[1].length}">${mdInline(m[2].replace(/\s+#+$/, ""))}</h4>`); continue; }
+    if (/^([-*_])(\s*\1){2,}$/.test(t)) { flushP(); flushL(); out.push("<hr>"); continue; }
+    if ((m = /^>\s?(.*)$/.exec(t))) { flushP(); flushL(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); continue; }
+    if ((m = /^([-*+]|\d{1,3}[.)])\s+(.*)$/.exec(t))) {
+      flushP();
+      const tag = /\d/.test(m[1]) ? "ol" : "ul";
+      if (list && list.tag !== tag) flushL();
+      if (!list) list = { tag, items: [] };
+      let item = m[2];
+      const cb = /^\[([ xX])\]\s+(.*)$/.exec(item);
+      list.items.push(cb ? { task: true, html: (cb[1] === " " ? "☐ " : "☑ ") + mdInline(cb[2]) } : { html: mdInline(item) }); continue;
+    }
+    if (list && /^\s{2,}/.test(raw)) { list.items[list.items.length - 1].html += " " + mdInline(t); continue; }
+    flushL(); para.push(t);
+  }
+  flushP(); flushL();
+  return out.join("");
+}
+// --- markdown:end
+
+// ------------------------------------------------------------ Klang import (only when the server has KLANG_API_KEY)
+let klangPoll = null;
+function klangSetup(enabled) {
+  $("klangBar").classList.toggle("hidden", !enabled);
+  if (enabled) klangStatus(false);
+}
+function klangShow(st) {
+  const running = !!(st && st.running), btn = $("klangSync"), msg = $("klangMsg");
+  btn.disabled = running; btn.classList.toggle("busy", running);
+  $("klangLabel").textContent = running ? "Synkar…" : "Synka från Klang";
+  const last = st && st.last;
+  msg.classList.toggle("err", !running && !!(last && last.error));
+  msg.textContent = running ? "Hämtar samtal från Klang…" : last ? last.message : "";
+}
+async function klangStatus(refreshAfter) {
+  clearTimeout(klangPoll);
+  let st;
+  try { const r = await fetch("/api/klang/sync"); st = await r.json(); } catch (_) { return; }
+  klangShow(st);
+  if (st.running) klangPoll = setTimeout(() => klangStatus(true), 1000);
+  else if (refreshAfter) refreshNotes();
+}
+$("klangSync").onclick = async () => {
+  klangShow({ running: true });
+  try {
+    const r = await fetch("/api/klang/sync", { method: "POST" });
+    const st = await r.json();
+    if (!r.ok) throw new Error(st.error || r.status);
+    klangShow(st);
+    klangPoll = setTimeout(() => klangStatus(true), 600);
+  } catch (e) {
+    klangShow({ running: false, last: { error: true, message: "Kunde inte starta synken: " + (e.message || e) } });
+  }
+};
+
 const DATED = /^\d{1,2} [a-zåäö]{3} \d{4} \d{2}:\d{2}/;   // default titles already start with the date
 // --- day-grouping:start (pure functions; also unit-tested by scripts/test-ui.mjs)
 const SV_MONTHS = ["januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti", "september", "oktober", "november", "december"];
@@ -1149,9 +1278,9 @@ function groupByDay(notes, now) {
 }
 // --- day-grouping:end
 function noteItem(n, q, current, withDay) {
-  const meta = [withDay ? dayLabel(n.created) + " " + clockTime(n.created) : clockTime(n.created), fmtShort(n.audio_duration), n.words + " ord"].join(" · ");
+  const meta = [withDay ? dayLabel(n.created) + " " + clockTime(n.created) : clockTime(n.created), n.audio_duration || n.source !== "klang" ? fmtShort(n.audio_duration) : "", n.words + " ord"].filter(Boolean).join(" · ");
   return `<a class="note-item" href="#/notes/${esc(n.id)}" data-id="${esc(n.id)}"${current ? ' aria-current="true"' : ""}>` +
-    `<div class="ni-title">${hlTerms(n.title, q)}</div><div class="ni-meta">${esc(meta)}</div>` +
+    `<div class="ni-title">${hlTerms(n.title, q)}</div><div class="ni-meta">${esc(meta)}${n.source === "klang" ? '<span class="badge">Klang</span>' : ""}</div>` +
     (n.snippet ? `<div class="ni-snip">${hlTerms(n.snippet, q)}</div>` : "") + `</a>`;
 }
 function renderList() {
@@ -1224,7 +1353,9 @@ $("renameForm").onsubmit = async e => {
 // delete with confirmation
 $("delBtn").onclick = () => {
   if (!curNote) return;
-  $("dlgText").textContent = `”${curNote.title}” – texten och ljudet tas bort permanent från datorn.`;
+  $("dlgText").textContent = curNote.source === "klang"
+    ? `”${curNote.title}” tas bort här. Samtalet finns kvar i Klang men importeras inte igen vid nästa synk.`
+    : `”${curNote.title}” – texten och ljudet tas bort permanent från datorn.`;
   const d = $("confirmDlg");
   if (d.showModal) d.showModal(); else if (confirm("Radera anteckningen? Texten och ljudet tas bort permanent.")) doDelete();
 };

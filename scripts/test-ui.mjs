@@ -1,4 +1,4 @@
-// Unit test for the Notes day grouping in crates/prata-web/src/index.html.
+// Unit tests for pure UI functions in crates/prata-web/src/index.html (day grouping, safe markdown).
 // Runs the real functions (extracted between the day-grouping markers) in a
 // fixed time zone:  TZ=Europe/Stockholm node scripts/test-ui.mjs
 import { readFileSync } from "node:fs";
@@ -44,3 +44,27 @@ assert.deepEqual(g.map(x => x.label), ["Idag", "Igår", "28 september", "28 sept
 assert.deepEqual(g.map(x => x.notes.map(n => n.id).join("")), ["db", "c", "fe", "a"]);
 assert.equal(groupByDay([], now).length, 0);
 console.log("ui day-grouping tests: ok (TZ=" + Intl.DateTimeFormat().resolvedOptions().timeZone + ")");
+
+// ---- safe markdown subset for Klang summaries
+const mm = /\/\/ --- markdown:start[^\n]*\n([\s\S]*?)\/\/ --- markdown:end/.exec(html);
+assert.ok(mm, "markdown markers not found");
+const mctx = {};
+vm.runInNewContext(mm[1] + "\nthis.mdToHtml = mdToHtml;", mctx);
+const md = mctx.mdToHtml;
+assert.equal(md("## Beslut\n- **Ja** till budget\n- Nej till `rm -rf`\n\nKlart."),
+  '<h4 class="md-h md-h2">Beslut</h4><ul><li><strong>Ja</strong> till budget</li><li>Nej till <code>rm -rf</code></li></ul><p>Klart.</p>');
+assert.equal(md("1. Ett\n2. Två"), "<ol><li>Ett</li><li>Två</li></ol>");
+assert.equal(md("- [ ] Göra\n- [x] Gjort"), "<ul><li class=\"task\">☐ Göra</li><li class=\"task\">☑ Gjort</li></ul>");
+assert.equal(md("rad 1\nrad *två*"), "<p>rad 1<br>rad <em>två</em></p>");
+// no raw HTML, no script, no javascript: links, attributes can't be broken out of
+assert.equal(md("<script>alert(1)</script>"), "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>");
+assert.equal(md('<img src=x onerror="alert(1)">'), "<p>&lt;img src=x onerror=&quot;alert(1)&quot;&gt;</p>");
+assert.equal(md("[klicka](javascript:alert(1))"), "<p>klicka)</p>");
+assert.equal(md('[x](https://a.se/"onmouseover="alert(1))'), '<p><a href="https://a.se/&quot;onmouseover=&quot;alert(1" target="_blank" rel="noopener noreferrer">x</a>)</p>');
+assert.equal(md("[Länk](https://ex.se/a_b_c)"), '<p><a href="https://ex.se/a_b_c" target="_blank" rel="noopener noreferrer">Länk</a></p>');
+assert.equal(md("Se https://ex.se/x_y_z."), '<p>Se <a href="https://ex.se/x_y_z" target="_blank" rel="noopener noreferrer">https://ex.se/x_y_z</a>.</p>');
+assert.equal(md("> citat\n\n---"), "<blockquote>citat</blockquote><hr>");
+assert.equal(md(""), "");
+assert.ok(!/<(?!\/?(p|br|ul|ol|li|h4|strong|em|code|a|blockquote|hr)\b)/.test(md("<b>x</b> <iframe> <svg onload=1> \u0000 x")), "only whitelisted tags");
+console.log("ui markdown tests: ok");
+assert.equal(md("- punkt\n  fortsätter"), "<ul><li>punkt fortsätter</li></ul>");
