@@ -55,7 +55,24 @@ function target() {
   const t = TARGETS[key];
   if (!t) die(`Unsupported platform ${key}. Prebuilt binaries exist for: ${Object.keys(TARGETS).join(", ")}.\n` +
               "        Build from source instead: https://github.com/" + OWNER + "/" + REPO);
+  if (t === "linux-x64") checkGlibc();
   return t;
+}
+
+// The linux-x64 binaries are built on Ubuntu 24.04 (onnxruntime for Snabb needs it) and need
+// glibc >= 2.39. Older systems would fail with an obscure loader error, so say it up front.
+const MIN_GLIBC = [2, 39];
+function checkGlibc() {
+  if (process.env.PRATA_SKIP_GLIBC_CHECK === "1") return;
+  let v = process.env.PRATA_FAKE_GLIBC; // tests only
+  if (!v) { try { v = process.report.getReport().header.glibcVersionRuntime; } catch { v = undefined; } }
+  if (!v) return; // not glibc (or unknown): let the loader decide
+  const [maj, min] = String(v).split(".").map((x) => parseInt(x, 10));
+  if (maj < MIN_GLIBC[0] || (maj === MIN_GLIBC[0] && min < MIN_GLIBC[1])) {
+    die(`Prata ${VERSION} för Linux kräver glibc ${MIN_GLIBC.join(".")} eller senare (t.ex. Ubuntu 24.04, Debian 13, Fedora 40). ` +
+        `Den här datorn har glibc ${v}.\n` +
+        "        Uppgradera systemet, använd prata-app@0.5.1 (utan Snabb) eller bygg från källkod: https://github.com/" + OWNER + "/" + REPO);
+  }
 }
 
 function checkFfmpeg() {
@@ -226,6 +243,7 @@ function openBrowser(url) {
 async function main() {
   if (flag("--help") || flag("-h")) return usage();
   if (flag("--version") || flag("-v")) return console.log(VERSION);
+  if (!process.env.PRATA_BIN_DIR) target(); // platform + glibc check before anything else
   checkFfmpeg();
   checkYtDlp();
   const dir = await ensureBinaries();

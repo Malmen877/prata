@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04    # same glibc baseline as the linux-x64 release build (ort/onnxruntime needs >= 2.38)
             features: snabb
           - os: macos-14
             features: metal,snabb

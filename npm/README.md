@@ -9,7 +9,9 @@ npx prata-app
 
 What it does:
 
-1. Detects your platform: `darwin-arm64` (Apple Silicon, Metal GPU), `darwin-x64`, or `linux-x64`.
+1. Detects your platform: `darwin-arm64` (Apple Silicon, Metal GPU), `darwin-x64`, or `linux-x64`
+   (needs glibc 2.39+, e.g. Ubuntu 24.04+ or Debian 13+; on older systems it stops with a clear message, use
+   `npx prata-app@0.5.1` there).
 2. On first run, downloads `prata-v<version>-<platform>.tar.gz` from the matching GitHub Release
    (`v<version>` = this package's version), verifies its `.sha256` if present, and extracts it with
    the system `tar` into `~/.prata/<version>/`.

@@ -74,3 +74,17 @@ test("a crashing prata-web keeps its exit code and its messages", async () => {
   assert.match(out.stdout + out.stderr, /prata-web exited/);
   assert.ok(!(out.stdout + out.stderr).includes(KEY));
 });
+
+test("linux: too old glibc gives a clear Swedish error before any download", { skip: process.platform !== "linux" || process.arch !== "x64" }, async () => {
+  const { spawnSync } = await import("node:child_process");
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), "prata-glibc-"));
+  const env = { ...process.env, PRATA_FAKE_GLIBC: "2.35", PRATA_CACHE_DIR: cache, PRATA_NO_BROWSER: "1" };
+  delete env.PRATA_BIN_DIR;
+  const r = spawnSync(process.execPath, [LAUNCHER, "--no-open"], { env, encoding: "utf8", timeout: 20000 });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /kräver glibc 2\.39 eller senare/);
+  assert.match(r.stderr, /glibc 2\.35/);
+  assert.equal(fs.readdirSync(cache).length, 0, "nothing downloaded");
+  const ok = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.report.getReport().header.glibcVersionRuntime))"], { encoding: "utf8" });
+  assert.ok(ok.stdout.length > 0);
+});

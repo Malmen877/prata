@@ -29,6 +29,9 @@ npx prata-app
 ```
 
 On Linux install ffmpeg with `sudo apt install ffmpeg` (or your distro's package) first.
+The Linux x64 binaries need **glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Fedora 40+ and similar); the
+launcher says so in Swedish and stops on older systems. On Ubuntu 22.04 use 0.5.1 (`npx prata-app@0.5.1`, no Snabb)
+or build from source.
 
 `npx prata-app` downloads the prebuilt binaries for your platform (macOS Apple Silicon, macOS Intel, Linux x64)
 from this repository's GitHub Release into `~/.prata/<version>/`, starts the server on a free port
@@ -114,7 +117,7 @@ context on both sides.
   `decoder_joint-model.int8.onnx`, `vocab.txt`)
   are downloaded from Hugging Face into the normal cache (`~/.cache/huggingface/`, `HF_HOME` respected). The web UI
   shows the download progress; later runs start straight away.
-- **Platforms:** macOS Apple Silicon and Linux x64. The macOS Intel build has no Snabb; the option is shown greyed out there.
+- **Platforms:** macOS Apple Silicon and Linux x64 (glibc 2.39+, e.g. Ubuntu 24.04+; the prebuilt ONNX Runtime needs it). The macOS Intel build has no Snabb; the option is shown greyed out there.
 - **CLI:** `prata recording.m4a --model snabb --timestamps` (`pianissimo`, `KlangAI/pianissimo-sv` and
   `KlangAI/pianissimo-sv-onnx` are accepted too). The model revision is pinned to the one this version was tested with.
 - **No Python fallback:** if the build has no Snabb, a Snabb job fails with a Swedish message. It does not silently

@@ -39,8 +39,8 @@ jobs:
             triple: aarch64-apple-darwin
             features: metal,snabb
             test_features: snabb
-          - name: linux-x64             # CPU; built on 22.04 for an older glibc baseline
-            os: ubuntu-22.04
+          - name: linux-x64             # CPU; ubuntu-24.04: ort's prebuilt onnxruntime needs glibc >= 2.38
+            os: ubuntu-24.04            # (built on 22.04 it fails to link: __isoc23_strtol); binary needs glibc >= 2.39
             triple: x86_64-unknown-linux-gnu
             features: snabb
             test_features: snabb
