@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "prata"
-version = "0.5.1"
+version = "0.6.1"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "prata-web"
-version = "0.5.1"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "axum",

@@ -1,6 +1,6 @@
 {
   "name": "prata-app",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "description": "Prata – local Swedish speech-to-text in your browser. Downloads the prebuilt Prata binaries and starts the web UI.",
   "keywords": ["speech-to-text", "swedish", "svenska", "whisper", "transcription", "local", "offline"],
   "license": "MIT",
