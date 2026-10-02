@@ -22,12 +22,12 @@ use std::time::Instant;
 use tokenizers::Tokenizer;
 
 #[derive(Parser, Debug)]
-#[command(name = "prata", version, about = "Prata – Swedish speech-to-text with KBLab kb-whisper models (Candle)", after_help = SNABB_HELP)]
+#[command(name = "prata", version, about = "Prata – local Swedish speech-to-text: KB-Whisper (KBLab, Candle) and Snabb (Klang Pianissimo, ONNX Runtime)", after_help = SNABB_HELP)]
 struct Args {
     /// Audio file (any format ffmpeg can decode)
     audio: PathBuf,
-    /// tiny | base | small | medium | large (KB-Whisper), snabb (Klang Pianissimo),
-    /// or a full Hugging Face repo id
+    /// snabb (Klang Pianissimo, fastest; also "pianissimo"), tiny | base | small | medium |
+    /// large (KB-Whisper), or a full Hugging Face repo id. The web UI defaults to small.
     #[arg(long, default_value = "large")]
     model: String,
     /// Model revision/branch on the Hub (default: main; KBLab also has e.g. "strict",
@@ -46,8 +46,8 @@ struct Args {
     /// Language code to force
     #[arg(long, default_value = "sv")]
     language: String,
-    /// Skip long silences before transcription (energy-based VAD). Timestamps always
-    /// refer to the original audio.
+    /// Skip long silences before transcription (energy-based VAD; all models). Timestamps
+    /// always refer to the original audio.
     #[arg(long, default_value = "on", value_parser = ["on", "off"])]
     vad: String,
     /// VAD: pauses at least this long (seconds) are removed
@@ -59,18 +59,18 @@ struct Args {
     /// VAD: speech threshold in dB above the noise floor (default: automatic)
     #[arg(long)]
     vad_threshold: Option<f64>,
-    /// Number of 30 s windows encoded and decoded together. 0 = automatic
+    /// KB-Whisper: number of 30 s windows encoded and decoded together. 0 = automatic
     /// (4 on Metal/CUDA, 1 on CPU). Without --pack the windows of different speech
     /// regions are batched; each region is still decoded window by window exactly
     /// like the sequential decoder.
     #[arg(long, default_value_t = 0)]
     batch_size: usize,
-    /// Experimental: pack speech into fixed ≤30 s windows cut at quiet points, so
+    /// KB-Whisper, experimental: pack speech into fixed ≤30 s windows cut at quiet points, so
     /// even continuous speech can be batched. Faster, but window borders differ from
     /// the sequential decoder and some words can change (see README).
     #[arg(long)]
     pack: bool,
-    /// Cache the decoder's self-attention keys/values between steps (same result,
+    /// KB-Whisper: cache the decoder's self-attention keys/values between steps (same result,
     /// much less work per token). `off` recomputes the whole sequence every step.
     #[arg(long, default_value = "on", value_parser = ["on", "off"])]
     kv_cache: String,
@@ -89,9 +89,9 @@ struct Args {
 }
 
 #[cfg(feature = "snabb")]
-const SNABB_HELP: &str = "Snabb (Klang Pianissimo, KlangAI/pianissimo-sv, CC BY 4.0): available in this build (--model snabb).";
+const SNABB_HELP: &str = "Snabb (Klang Pianissimo by KlangAI, CC BY 4.0, https://huggingface.co/KlangAI/pianissimo-sv): available in this build (--model snabb). The model (~660 MB) is downloaded from Hugging Face on first use.";
 #[cfg(not(feature = "snabb"))]
-const SNABB_HELP: &str = "Snabb (Klang Pianissimo): not available in this build.";
+const SNABB_HELP: &str = "Snabb (Klang Pianissimo): not available in this build (needs macOS on Apple Silicon or Linux x64).";
 
 enum Plan {
     /// Speech regions (frames, original timeline), each decoded with the

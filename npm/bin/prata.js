@@ -33,12 +33,12 @@ function die(msg, code = 1) { console.error("[prata] " + msg); process.exit(code
 function usage() {
   console.log(`Prata ${VERSION} – lokal svensk tal-till-text
 
-Usage: npx prata-app [--port N] [--no-open] [--model tiny|base|small|medium|large]
+Usage: npx prata-app [--port N] [--no-open] [--model snabb|small|large|tiny|base|medium]
 
 Options:
   --port N       port to listen on (default ${DEFAULT_PORT}, or a free port)
   --no-open      do not open the browser
-  --model M      default model in the UI (default small)
+  --model M      default model in the UI (default small; the picker shows snabb, small and large)
   --version      print version
   --help         this help
 
@@ -257,7 +257,7 @@ async function main() {
     stop("SIGTERM"); die(`${e.message} (see prata-web's messages above)`);
   }
   log(`Prata körs på ${url}  (Ctrl+C för att avsluta)`);
-  log("Första transkriberingen laddar ner modellen från Hugging Face (small ≈ 0.6 GB, large ≈ 3 GB).");
+  log("Första transkriberingen laddar ner modellen från Hugging Face (Snabb ≈ 0,66 GB, Standard ≈ 0,97 GB, Large ≈ 3,1 GB).");
   openBrowser(url);
 }
 
