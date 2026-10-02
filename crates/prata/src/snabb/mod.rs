@@ -127,6 +127,10 @@ mod imp {
         let total = pcm.len() / mel::HOP;
         let db = crate::vad::frame_db(&pcm, total);
         let windows = chunk::plan(total, &db, &o.chunk);
+        // Normalisation statistics over the whole recording: every window then gets
+        // exactly the features of a single pass, independent of how much silence
+        // happens to fall inside it.
+        let stats = mel::Stats::of_signal(&pcm);
         // VAD (on by default): windows whose core has no speech are skipped.
         let speech = if o.vad {
             let (r, rep) = crate::vad::speech_regions(&db, &o.vad_opts);
@@ -147,9 +151,7 @@ mod imp {
                     continue;
                 }
             }
-            let a = (w.start * mel::HOP).min(pcm.len());
-            let b = (w.end * mel::HOP).min(pcm.len());
-            let (feats, n_frames, valid) = mel::features(&pcm[a..b]);
+            let (feats, n_frames, valid) = mel::window_features(&pcm, w.start, w.end, &stats);
             let (enc, n, dim) = encoder.run(feats, n_frames, valid)?;
             let toks = tdt::greedy(&mut joint, &cfg, n, |t| &enc[t * dim..(t + 1) * dim])?;
             let off = w.start as f64 / 100.0;

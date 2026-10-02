@@ -481,6 +481,127 @@ fn parse_output(stdout: &str, duration: f64) -> (Vec<Segment>, &'static str) {
     )
 }
 
+// ---------------------------------------------------------------- models
+
+/// The Snabb model (Klang Pianissimo, int8 ONNX) as fetched by `prata --model snabb`.
+const SNABB_REPO: &str = "KlangAI/pianissimo-sv-onnx";
+const SNABB_REVISION: &str = "63730c6021234f26b9bbae9a07a04fec39e7a52e";
+const SNABB_FILES: [(&str, u64); 3] = [
+    ("vocab.txt", 93_939),
+    ("decoder_joint-model.int8.onnx", 30_025_652),
+    ("encoder-model.int8.onnx", 630_313_965),
+];
+const SNABB_UNSUPPORTED: &str = "Snabb finns inte för den här datorn (kräver Mac med Apple Silicon eller Linux x64).";
+
+/// `--model snabb` with a prata build that has no Snabb engine.
+#[derive(Debug)]
+struct SnabbUnsupported;
+
+impl std::fmt::Display for SnabbUnsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(SNABB_UNSUPPORTED)
+    }
+}
+
+impl std::error::Error for SnabbUnsupported {}
+
+fn is_snabb(model: &str) -> bool {
+    matches!(
+        model.to_ascii_lowercase().as_str(),
+        "snabb" | "pianissimo" | "klangai/pianissimo-sv" | "klangai/pianissimo-sv-onnx"
+    )
+}
+
+/// `prata --help` of a build with the Snabb engine says so.
+fn snabb_available(info: &PrataInfo) -> bool {
+    info.works && info.help.contains("available in this build (--model snabb)")
+}
+
+/// Hugging Face hub cache: HF_HUB_CACHE, HUGGINGFACE_HUB_CACHE, HF_HOME/hub, ~/.cache/huggingface/hub.
+fn hf_cache_dir() -> Option<PathBuf> {
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    var("HF_HUB_CACHE")
+        .or_else(|| var("HUGGINGFACE_HUB_CACHE"))
+        .or_else(|| var("HF_HOME").map(|h| h.join("hub")))
+        .or_else(|| var("XDG_CACHE_HOME").map(|h| h.join("huggingface").join("hub")))
+        .or_else(|| var("HOME").map(|h| h.join(".cache").join("huggingface").join("hub")))
+}
+
+/// Are all `files` of `repo` present in some snapshot (or the given revision)?
+fn hf_cached(cache: Option<&Path>, repo: &str, revision: Option<&str>, files: &[&str]) -> bool {
+    let Some(cache) = cache else { return false };
+    let snaps = cache.join(format!("models--{}", repo.replace('/', "--"))).join("snapshots");
+    let dirs: Vec<PathBuf> = match revision {
+        Some(r) => vec![snaps.join(r)],
+        None => std::fs::read_dir(&snaps)
+            .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+            .unwrap_or_default(),
+    };
+    dirs.iter().any(|d| files.iter().all(|f| d.join(f).is_file()))
+}
+
+/// The model list for /api/info.
+fn models_info(info: &PrataInfo, cache: Option<&Path>) -> serde_json::Value {
+    // KB-Whisper download sizes (model.safetensors + small json files)
+    // (id, label, description, download size)
+    let kb = [
+        ("tiny", "tiny", "snabbast", 151_000_000u64),
+        ("base", "base", "snabb", 290_000_000),
+        ("small", "Standard", "Bästa balansen mellan kvalitet och tid", 967_000_000),
+        ("medium", "medium", "bättre", 3_060_000_000),
+        ("large", "Large", "Högst kvalitet, långsammast", 3_090_000_000),
+    ];
+    let mut v: Vec<serde_json::Value> = kb
+        .iter()
+        .map(|(id, label, desc, size)| {
+            serde_json::json!({
+                "id": id, "label": label, "description": desc, "engine": "kb-whisper",
+                "size_bytes": size,
+                "downloaded": hf_cached(cache, &format!("KBLab/kb-whisper-{id}"), None, &["model.safetensors", "tokenizer.json"]),
+                "available": true, "unsupported_reason": null, "license": null,
+            })
+        })
+        .collect();
+    let avail = snabb_available(info);
+    let files: Vec<&str> = SNABB_FILES.iter().map(|f| f.0).collect();
+    v.push(serde_json::json!({
+        "id": "snabb",
+        "label": "Snabb",
+        "description": "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar",
+        "engine": "pianissimo",
+        "size_bytes": SNABB_FILES.iter().map(|f| f.1).sum::<u64>(),
+        "downloaded": hf_cached(cache, SNABB_REPO, Some(SNABB_REVISION), &files),
+        "available": avail,
+        "unsupported_reason": if avail { serde_json::Value::Null } else { SNABB_UNSUPPORTED.into() },
+        "license": {
+            "name": "CC BY 4.0",
+            "url": "https://creativecommons.org/licenses/by/4.0/",
+            "author": "KlangAI",
+            "model_url": "https://huggingface.co/KlangAI/pianissimo-sv",
+            "modifications": "none (official ONNX int8 export, KlangAI/pianissimo-sv-onnx, used as published)",
+        },
+    }));
+    serde_json::Value::Array(v)
+}
+
+/// `[info] downloading <file>: <pct>% of <MB> MB` from prata -> (file, percent over
+/// all Snabb files by bytes). Files are fetched in the order of `SNABB_FILES`.
+fn model_download_progress(line: &str) -> Option<(String, f64)> {
+    let rest = line.strip_prefix("[info] downloading ")?;
+    let (file, rest) = rest.split_once(": ")?;
+    let pct: f64 = rest.split('%').next()?.trim().parse().ok()?;
+    let total: u64 = SNABB_FILES.iter().map(|f| f.1).sum();
+    let mut before = 0u64;
+    for (f, size) in SNABB_FILES {
+        if f == file {
+            let done = before as f64 + size as f64 * pct.clamp(0.0, 100.0) / 100.0;
+            return Some((file.to_string(), (done / total as f64 * 1000.0).round() / 10.0));
+        }
+        before += size;
+    }
+    Some((file.to_string(), pct.clamp(0.0, 100.0)))
+}
+
 // ---------------------------------------------------------------- jobs
 
 #[derive(Clone, Debug, Serialize)]
@@ -508,6 +629,10 @@ struct Job {
     download_pct: Option<f64>,
     /// How the link was fetched: "http" or "yt-dlp"
     fetched_via: Option<String>,
+    /// Model files being downloaded by prata on first use (Snabb): 0..100 over all
+    /// files of the model, and the current file name
+    model_download_pct: Option<f64>,
+    model_download_file: Option<String>,
     /// Error message meant to be shown as is (Swedish)
     error_user: Option<String>,
     #[serde(skip)]
@@ -539,6 +664,8 @@ impl Job {
             media_title: None,
             download_pct: None,
             fetched_via: None,
+            model_download_pct: None,
+            model_download_file: None,
             error_user: None,
             started: None,
             max_duration: None,
@@ -628,7 +755,12 @@ async fn run_cmd(st: &St, id: &str, mut cmd: Command) -> Result<String> {
             if !line.is_empty() {
                 all.push_str(&line);
                 all.push('\n');
+                let dl = model_download_progress(&line);
                 update(&st2, &id2, |j| {
+                    if let Some((file, pct)) = &dl {
+                        j.model_download_file = Some(file.clone());
+                        j.model_download_pct = Some(*pct);
+                    }
                     j.progress = line.chars().take(200).collect();
                     j.log_tail.push(line.chars().take(300).collect());
                     let n = j.log_tail.len();
@@ -734,7 +866,15 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
 
         let want = st.cfg.backend.as_str();
         let prata_ok = st.prata.lock().await.works;
-        let result = match want {
+        let snabb_ok = snabb_available(&*st.prata.lock().await);
+        let result = if is_snabb(&model) {
+            // Snabb only exists in the Rust CLI: no Python fallback.
+            if snabb_ok {
+                run_prata(&st, &id, &wav, &model, dur).await
+            } else {
+                Err(anyhow!(SnabbUnsupported))
+            }
+        } else { match want {
             "prata" => run_prata(&st, &id, &wav, &model, dur).await,
             "python" => run_python(&st, &id, &wav, &model, dur).await,
             _ if prata_ok => match run_prata(&st, &id, &wav, &model, dur).await {
@@ -747,7 +887,7 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
                 }
             },
             _ => run_python(&st, &id, &wav, &model, dur).await,
-        };
+        } };
         let (segs, fmt) = result?;
         let text = to_txt(&segs, false);
         let _ = tokio::fs::remove_file(&wav).await;
@@ -805,7 +945,11 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
     .await;
     if let Err(e) = res {
         eprintln!("[job {id}] error: {e:#}");
-        let user = e.downcast_ref::<fetch::FetchError>().map(|f| f.message());
+        let user = e.downcast_ref::<fetch::FetchError>().map(|f| f.message()).or_else(|| {
+            let unsupported = e.downcast_ref::<SnabbUnsupported>().is_some()
+                || format!("{e:#}").contains("finns inte i den här versionen av prata");
+            unsupported.then(|| SNABB_UNSUPPORTED.to_string())
+        });
         update(&st, &id, |j| {
             j.status = "error".into();
             j.error = Some(format!("{e:#}"));
@@ -866,6 +1010,7 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
         "default_model": st.cfg.default_model,
         "url": url_info(&st.cfg, y.as_ref()),
         "klang_enabled": st.klang.is_some(),
+        "models": models_info(&k, hf_cache_dir().as_deref()),
     }))
 }
 
@@ -1597,6 +1742,140 @@ mod api_tests {
         panic!("job {id} did not finish");
     }
 
+    /// A stand-in for the prata CLI: `--help` advertises Snabb (or not); a run
+    /// prints model download progress on stderr and SRT on stdout.
+    fn fake_prata(dir: &Path, snabb: bool) -> PathBuf {
+        let p = dir.join(if snabb { "prata-snabb" } else { "prata-nosnabb" });
+        let marker = if snabb {
+            "Snabb (Klang Pianissimo, KlangAI/pianissimo-sv, CC BY 4.0): available in this build (--model snabb)."
+        } else {
+            "Snabb (Klang Pianissimo): not available in this build."
+        };
+        let script = format!(
+            r#"#!/bin/sh
+if [ "$1" = "--help" ]; then echo "Usage: prata [OPTIONS] --model <MODEL> --timestamps"; echo "{marker}"; exit 0; fi
+case "$*" in *"--model snabb"*) ;; *) echo "wrong model: $*" >&2; exit 3;; esac
+{run}
+"#,
+            run = if snabb {
+                r#"echo "[info] downloading KlangAI/pianissimo-sv-onnx/encoder-model.int8.onnx (Klang Pianissimo, CC BY 4.0) ..." >&2
+echo "[info] downloading encoder-model.int8.onnx: 50% of 630 MB" >&2
+echo "[info] window 0.0s done in 0.1s (1/1)" >&2
+printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520 --> 00:00:02,640\nDet här är Snabb.\n'"#
+            } else {
+                r#"echo "Error: Snabb (Klang Pianissimo) finns inte i den här versionen av prata" >&2; exit 1"#
+            }
+        );
+        std::fs::write(&p, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    }
+
+    fn wav_3s() -> Vec<u8> {
+        let n = 16_000 * 3;
+        let mut v = Vec::with_capacity(44 + n * 2);
+        v.extend_from_slice(b"RIFF");
+        v.extend_from_slice(&((36 + n * 2) as u32).to_le_bytes());
+        v.extend_from_slice(b"WAVEfmt ");
+        v.extend_from_slice(&16u32.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&1u16.to_le_bytes());
+        v.extend_from_slice(&16_000u32.to_le_bytes());
+        v.extend_from_slice(&32_000u32.to_le_bytes());
+        v.extend_from_slice(&2u16.to_le_bytes());
+        v.extend_from_slice(&16u16.to_le_bytes());
+        v.extend_from_slice(b"data");
+        v.extend_from_slice(&((n * 2) as u32).to_le_bytes());
+        for i in 0..n {
+            let x = ((i as f32 * 0.05).sin() * 3000.0) as i16;
+            v.extend_from_slice(&x.to_le_bytes());
+        }
+        v
+    }
+
+    async fn upload(app: &Router, model: &str) -> String {
+        let bnd = "XprataBoundaryX";
+        let mut body = format!("--{bnd}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n--{bnd}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"klipp.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
+        body.extend(wav_3s());
+        body.extend(format!("\r\n--{bnd}--\r\n").into_bytes());
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/jobs")
+            .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={bnd}"))
+            .body(Body::from(body))
+            .unwrap();
+        let r = app.clone().oneshot(req).await.unwrap();
+        let b = r.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap()["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn snabb_job_with_mocked_engine() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = fake_prata(tmp.path(), true);
+        let st = state_with(tmp.path(), fetch::NetPolicy::strict(), |c| {
+            c.prata_bin = Some(bin.clone());
+            c.backend = "auto".into();
+        });
+        let app = app(st.clone());
+        let (_, _, b) = call(&app, "GET", "/api/info", None, None).await;
+        let info: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        let snabb = info["models"].as_array().unwrap().iter().find(|m| m["id"] == "snabb").unwrap().clone();
+        assert_eq!(snabb["available"], true, "{info}");
+        assert_eq!(snabb["label"], "Snabb");
+        assert_eq!(info["default_model"], "small");
+        let id = upload(&app, "snabb").await;
+        let j = wait_job(&app, &id).await;
+        assert_eq!(j["status"], "done", "{j}");
+        assert_eq!(j["model"], "snabb");
+        assert_eq!(j["model_download_file"], "encoder-model.int8.onnx");
+        let pct = j["model_download_pct"].as_f64().unwrap();
+        assert!(pct > 45.0 && pct < 55.0, "{pct}");
+        let segs = j["segments"].as_array().unwrap();
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[1]["text"], "Det här är Snabb.");
+        assert!((segs[1]["start"].as_f64().unwrap() - 1.52).abs() < 1e-9);
+        // saved as a note with the model id, SRT export works
+        let nid = j["note_id"].as_str().unwrap().to_string();
+        let (_, _, b) = call(&app, "GET", &format!("/api/notes/{nid}"), None, None).await;
+        let n: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(n["model"], "snabb");
+    }
+
+    #[tokio::test]
+    async fn snabb_unsupported_build_gives_swedish_error_without_python_fallback() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = fake_prata(tmp.path(), false);
+        let st = state_with(tmp.path(), fetch::NetPolicy::strict(), |c| {
+            c.prata_bin = Some(bin.clone());
+            c.backend = "auto".into();
+            c.python = "/nonexistent/python-must-not-run".into();
+        });
+        let app = app(st.clone());
+        let (_, _, b) = call(&app, "GET", "/api/info", None, None).await;
+        let info: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        let snabb = info["models"].as_array().unwrap().iter().find(|m| m["id"] == "snabb").unwrap().clone();
+        assert_eq!(snabb["available"], false);
+        assert_eq!(snabb["unsupported_reason"], SNABB_UNSUPPORTED);
+        let id = upload(&app, "snabb").await;
+        let j = wait_job(&app, &id).await;
+        assert_eq!(j["status"], "error", "{j}");
+        assert_eq!(j["error_user"], SNABB_UNSUPPORTED);
+        assert!(!j["error"].as_str().unwrap().contains("python"), "{j}");
+    }
+
     #[tokio::test]
     async fn url_endpoint_validation_and_ssrf() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1864,6 +2143,53 @@ mod api_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snabb_model_ids_and_download_progress() {
+        assert!(is_snabb("snabb") && is_snabb("Pianissimo") && is_snabb("KlangAI/pianissimo-sv"));
+        assert!(!is_snabb("small") && !is_snabb("KBLab/kb-whisper-small"));
+        // vocab + decoder done, encoder half way: (93939 + 30025652 + 315156982) / 660433556
+        let (f, p) = model_download_progress("[info] downloading encoder-model.int8.onnx: 50% of 630 MB").unwrap();
+        assert_eq!(f, "encoder-model.int8.onnx");
+        assert!((p - 52.3).abs() < 0.11, "{p}");
+        assert_eq!(model_download_progress("[info] downloading vocab.txt: 100% of 0 MB").unwrap().1, 0.0);
+        assert!(model_download_progress("[info] downloading KlangAI/pianissimo-sv-onnx/vocab.txt (Klang Pianissimo, CC BY 4.0) ...").is_none());
+        assert!(model_download_progress("[info] window 30.0s done in 1.2s (2/5)").is_none());
+    }
+
+    #[test]
+    fn models_info_lists_all_models_and_cache_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path();
+        let snap = cache.join("models--KlangAI--pianissimo-sv-onnx/snapshots").join(SNABB_REVISION);
+        std::fs::create_dir_all(&snap).unwrap();
+        for (f, _) in SNABB_FILES {
+            std::fs::write(snap.join(f), b"x").unwrap();
+        }
+        let kb = cache.join("models--KBLab--kb-whisper-small/snapshots/abc");
+        std::fs::create_dir_all(&kb).unwrap();
+        std::fs::write(kb.join("model.safetensors"), b"x").unwrap();
+        std::fs::write(kb.join("tokenizer.json"), b"x").unwrap();
+        let info = PrataInfo { works: true, help: "available in this build (--model snabb)".into(), ..Default::default() };
+        let v = models_info(&info, Some(cache));
+        let ids: Vec<&str> = v.as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["tiny", "base", "small", "medium", "large", "snabb"]);
+        let m = |id: &str| v.as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+        assert_eq!(m("snabb")["downloaded"], true);
+        assert_eq!(m("snabb")["size_bytes"], 660_433_556u64);
+        assert_eq!(m("snabb")["license"]["name"], "CC BY 4.0");
+        assert_eq!(m("snabb")["description"], "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar");
+        assert_eq!((m("small")["label"].as_str(), m("small")["description"].as_str()), (Some("Standard"), Some("Bästa balansen mellan kvalitet och tid")));
+        assert_eq!((m("large")["label"].as_str(), m("large")["description"].as_str()), (Some("Large"), Some("Högst kvalitet, långsammast")));
+        assert_eq!(m("small")["downloaded"], true);
+        assert_eq!(m("large")["downloaded"], false);
+        // a build without the engine
+        let v = models_info(&PrataInfo { works: true, help: "not available in this build".into(), ..Default::default() }, None);
+        let s = v.as_array().unwrap().iter().find(|m| m["id"] == "snabb").unwrap();
+        assert_eq!(s["available"], false);
+        assert_eq!(s["downloaded"], false);
+        assert_eq!(s["unsupported_reason"], SNABB_UNSUPPORTED);
+    }
     #[test]
     fn srt_fmt() {
         assert_eq!(fmt_ts(3725.5, ','), "01:02:05,500");
