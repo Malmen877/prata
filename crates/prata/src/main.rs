@@ -27,7 +27,8 @@ struct Args {
     /// Audio file (any format ffmpeg can decode)
     audio: PathBuf,
     /// snabb (Klang Pianissimo, fastest; also "pianissimo"), tiny | base | small | medium |
-    /// large (KB-Whisper), or a full Hugging Face repo id. The web UI defaults to small.
+    /// large (KB-Whisper), or a full Hugging Face repo id. The web UI preselects small;
+    /// the CLI default is
     #[arg(long, default_value = "large")]
     model: String,
     /// Model revision/branch on the Hub (default: main; KBLab also has e.g. "strict",
