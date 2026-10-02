@@ -8,7 +8,7 @@ with [Hugging Face Candle](https://github.com/huggingface/candle) (Metal GPU on 
 serves a small web UI on `127.0.0.1`. For long recordings there is an optional fast model, **Snabb**
 ([Klang Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv) by KlangAI, CC BY 4.0), run on the CPU with ONNX Runtime.
 
-![Prata – finished transcript](docs/screenshot.png)
+![Prata – model picker with Snabb, Standard and Large](docs/screenshot.png)
 
 - Record from the microphone or upload a file (wav, mp3, m4a, ogg, flac, opus, webm, mp4 – anything ffmpeg reads)
 - **Transcribe from a link:** paste a YouTube/SVT Play/podcast page (needs [yt-dlp](#transcribe-from-a-link)) or a direct link to an audio/video file
@@ -63,7 +63,8 @@ The measurements were made on a **Linux x86_64 machine** (KVM guest, Intel Xeon 
 15 GB RAM, **CPU only, no GPU**) with default settings. Snabb ran int8 with `--threads 4` and 30 s windows with 5 s of
 context; KB-Whisper ran on the CPU through Candle. The time is the wall time of one `prata` run including model
 loading, with the model already downloaded. The machine was shared, so times are ±15 %. The peak memory is the peak
-RSS of the `prata` process. **Mac numbers (Apple Silicon, Metal) are coming** and aren't in these tables yet.
+RSS of the `prata` process. The Mac column shows Snabb on a Mac mini M4. Snabb runs on the CPU there too (ONNX
+Runtime), while KB-Whisper uses Metal. **The Mac numbers for Standard and Large are coming.**
 
 WER is scored with Prata's Swedish normalisation (lowercase, punctuation removed, Swedish number words and digits
 compare equal, hyphens unified). The first WER column uses the original reference text. That text comes from a 2010
@@ -72,16 +73,19 @@ for those places.
 
 **long12 (12.5 min)**
 
-| Model | Time (x86 CPU) | Peak memory (x86 CPU) | WER | WER (corrected ref) | Mac (Metal) | Notes |
+| Model | Time (x86 CPU) | Peak memory (x86 CPU) | WER | WER (corrected ref) | Mac mini M4 | Notes |
 |---|---:|---:|---:|---:|---|---|
-| **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | Mac numbers coming | fastest, about 19× faster than Standard here; recommended for long recordings |
-| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | Mac numbers coming | **default** |
-| **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | Mac numbers coming | largest, slowest; needs a 16 GB+ Mac |
-<!-- TODO(0.6.1-mac): fill the "Mac (Metal)" column (time, peak memory) from Coder's Mac run -->
+| **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | 23.9 s wall time (21.7 s transcription), 2.2 GB² | fastest, about 19× faster than Standard here; recommended for long recordings |
+| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | Mac numbers coming (Metal) | **default** |
+| **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | Mac numbers coming (Metal) | largest, slowest; needs a 16 GB+ Mac |
+<!-- TODO(0.6.1-mac): fill the Standard and Large cells of the "Mac mini M4" column (Metal time, peak memory) from Coder's Mac run -->
 
 ¹ Large's peak memory was measured on the 2.5-minute clip with the CPU build (f32). It is much lower on Metal. Large's
 long12 WER comes from a Mac Metal run. Where both runs exist, KB-Whisper's output is byte-identical on the x86 CPU
 build and on Metal, so the WER figures hold for both machines.
+
+² Snabb on the Mac mini M4: the 2.5-minute clip takes 4.2 s with a 1.8 GB peak. A cold run, including loading the
+model, took 28.5 s. The model takes about 660 MB (630 MiB) in the Hugging Face cache.
 
 **WER per recording** (original reference, corrected reference in brackets; time on x86 CPU)
 
@@ -106,7 +110,8 @@ unmodified, with ONNX Runtime on the CPU. Pianissimo is a fine-tune of NVIDIA Pa
 and casing itself and gives sentence-level timestamps. Long audio is decoded in 30-second windows with overlapping
 context on both sides.
 
-- **First use:** the model files (about 660 MB: `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, `vocab.txt`)
+- **First use:** the model files (about 660 MB = 630 MiB, the same size in the cache: `encoder-model.int8.onnx`,
+  `decoder_joint-model.int8.onnx`, `vocab.txt`)
   are downloaded from Hugging Face into the normal cache (`~/.cache/huggingface/`, `HF_HOME` respected). The web UI
   shows the download progress; later runs start straight away.
 - **Platforms:** macOS Apple Silicon and Linux x64. The macOS Intel build has no Snabb; the option is shown greyed out there.
