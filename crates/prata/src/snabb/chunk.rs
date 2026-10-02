@@ -1,0 +1,133 @@
+//! Chunking for long audio.
+//!
+//! The encoder's memory grows with the input length (about 21 GB for 12.5 min in
+//! one pass), so audio is always transcribed in windows. Boundaries are placed
+//! at the quietest point (lowest 50 ms average energy) in a search range before
+//! the nominal window length, so they fall in pauses rather than inside words.
+//! Each window is decoded with `context` seconds of extra audio on both sides;
+//! from each window only the words that *start* inside its own core
+//! `[keep_from, keep_to)` are kept. The words near a boundary therefore come from
+//! a window that saw them with context on both sides, and every word is taken
+//! from exactly one window.
+
+use super::text::Word;
+
+#[derive(Debug, Clone)]
+pub struct ChunkOpts {
+    /// Nominal core length (seconds) of each window.
+    pub core: f64,
+    /// Extra audio decoded before and after the core (seconds).
+    pub context: f64,
+    /// Boundary search range before the nominal end (seconds).
+    pub search: f64,
+}
+
+impl Default for ChunkOpts {
+    fn default() -> Self {
+        Self { core: 30.0, context: 5.0, search: 8.0 }
+    }
+}
+
+/// One decoding window. Frames are 10 ms frames of the original audio.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Window {
+    /// Audio decoded: frames `[start, end)`.
+    pub start: usize,
+    pub end: usize,
+    /// Core: words starting in `[keep_from, keep_to)` (frames) are kept.
+    pub keep_from: usize,
+    pub keep_to: usize,
+}
+
+/// 50 ms moving average of the frame energies (dB) around frame `i`.
+fn smooth(db: &[f32], i: usize) -> f32 {
+    let lo = i.saturating_sub(2);
+    let hi = (i + 3).min(db.len());
+    db[lo..hi].iter().sum::<f32>() / (hi - lo).max(1) as f32
+}
+
+/// Plan windows over `total` frames with frame energies `db` (see `vad::frame_db`).
+pub fn plan(total: usize, db: &[f32], opts: &ChunkOpts) -> Vec<Window> {
+    let core = (opts.core * 100.0) as usize;
+    let search = ((opts.search * 100.0) as usize).min(core / 2);
+    let ctx = (opts.context * 100.0) as usize;
+    let mut bounds = vec![0usize];
+    let mut b = 0usize;
+    while total - b > core + search / 2 {
+        let (lo, hi) = (b + core - search, b + core);
+        let cut = (lo..hi)
+            .min_by(|&x, &y| {
+                let (ex, ey) = if db.is_empty() { (0.0, 0.0) } else { (smooth(db, x.min(db.len() - 1)), smooth(db, y.min(db.len() - 1))) };
+                // ties: the latest frame (longest core)
+                ex.total_cmp(&ey).then(y.cmp(&x))
+            })
+            .unwrap_or(hi);
+        bounds.push(cut);
+        b = cut;
+    }
+    bounds.push(total);
+    bounds
+        .windows(2)
+        .map(|w| Window { start: w[0].saturating_sub(ctx), end: (w[1] + ctx).min(total), keep_from: w[0], keep_to: w[1] })
+        .collect()
+}
+
+/// Keep the words of one window that start inside its core.
+pub fn keep_core(words: Vec<Word>, w: &Window, total: usize) -> Vec<Word> {
+    let from = if w.keep_from == 0 { f64::NEG_INFINITY } else { w.keep_from as f64 / 100.0 };
+    let to = if w.keep_to >= total { f64::INFINITY } else { w.keep_to as f64 / 100.0 };
+    words.into_iter().filter(|wd| wd.start() >= from && wd.start() < to).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::text::{tests::tiny_vocab, words, TimedTok};
+    use super::*;
+
+    #[test]
+    fn short_audio_is_one_window() {
+        let w = plan(1500, &vec![-40.0; 1500], &ChunkOpts::default());
+        assert_eq!(w, vec![Window { start: 0, end: 1500, keep_from: 0, keep_to: 1500 }]);
+    }
+
+    #[test]
+    fn boundaries_fall_in_the_quietest_place_and_cover_everything() {
+        let total = 10_000; // 100 s
+        let mut db = vec![-20.0f32; total];
+        // pauses at 27 s and 55 s
+        for f in 2690..2720 { db[f] = -70.0; }
+        for f in 5480..5520 { db[f] = -70.0; }
+        let ws = plan(total, &db, &ChunkOpts::default());
+        assert!(ws.len() >= 3);
+        assert!((2690..2720).contains(&ws[0].keep_to), "{:?}", ws[0]);
+        assert!((5480..5520).contains(&ws[1].keep_to), "{:?}", ws[1]);
+        assert_eq!(ws[0].keep_from, 0);
+        assert_eq!(ws.last().unwrap().keep_to, total);
+        for p in ws.windows(2) {
+            assert_eq!(p[0].keep_to, p[1].keep_from);
+            assert_eq!(p[1].start, p[1].keep_from - 500);
+            assert_eq!(p[0].end, p[0].keep_to + 500);
+        }
+        for w in &ws {
+            assert!(w.end - w.start <= 4000, "window too long: {w:?}");
+        }
+    }
+
+    #[test]
+    fn merge_takes_each_word_from_exactly_one_window() {
+        let v = tiny_vocab();
+        let t = |id: u32, s: f64| TimedTok { id, start: s, end: s + 0.1 };
+        let total = 6000;
+        let ws = vec![
+            Window { start: 0, end: 3500, keep_from: 0, keep_to: 3000 },
+            Window { start: 2500, end: 6000, keep_from: 3000, keep_to: 6000 },
+        ];
+        // both windows decode the overlap 25..35 s; "d"+"å" straddles nothing
+        let a = words(&v, &[t(1, 1.0), t(6, 26.0), t(2, 29.9), t(3, 30.05), t(7, 31.0)]);
+        let b = words(&v, &[t(6, 26.1), t(2, 29.95), t(3, 30.1), t(7, 31.05), t(8, 50.0)]);
+        let mut all = keep_core(a, &ws[0], total);
+        all.extend(keep_core(b, &ws[1], total));
+        let ids: Vec<u32> = all.iter().flat_map(|w| w.toks.iter().map(|t| t.id)).collect();
+        assert_eq!(ids, vec![1, 6, 2, 3, 7, 8]);
+    }
+}

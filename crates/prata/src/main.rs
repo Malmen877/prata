@@ -5,6 +5,7 @@
 extern crate accelerate_src;
 
 mod kvdec;
+mod snabb;
 mod vad;
 
 use anyhow::{bail, Context, Error as E, Result};
@@ -21,16 +22,18 @@ use std::time::Instant;
 use tokenizers::Tokenizer;
 
 #[derive(Parser, Debug)]
-#[command(name = "prata", version, about = "Prata – Swedish speech-to-text with KBLab kb-whisper models (Candle)")]
+#[command(name = "prata", version, about = "Prata – Swedish speech-to-text with KBLab kb-whisper models (Candle)", after_help = SNABB_HELP)]
 struct Args {
     /// Audio file (any format ffmpeg can decode)
     audio: PathBuf,
-    /// small | medium | large, or a full Hugging Face repo id
+    /// tiny | base | small | medium | large (KB-Whisper), snabb (Klang Pianissimo),
+    /// or a full Hugging Face repo id
     #[arg(long, default_value = "large")]
     model: String,
-    /// Model revision/branch on the Hub (KBLab also has e.g. "strict", "subtitle")
-    #[arg(long, default_value = "main")]
-    revision: String,
+    /// Model revision/branch on the Hub (default: main; KBLab also has e.g. "strict",
+    /// "subtitle"). Snabb defaults to the revision this version was tested with.
+    #[arg(long)]
+    revision: Option<String>,
     /// Write transcript (or SRT with --timestamps) to this file
     #[arg(long)]
     out: Option<PathBuf>,
@@ -74,7 +77,21 @@ struct Args {
     /// Print the VAD/window plan to stderr
     #[arg(long)]
     verbose: bool,
+    /// Snabb: window core length in seconds (long audio is always split into windows)
+    #[arg(long, default_value_t = 30.0, hide = true)]
+    snabb_window: f64,
+    /// Snabb: context decoded on each side of a window, seconds
+    #[arg(long, default_value_t = 5.0, hide = true)]
+    snabb_context: f64,
+    /// Snabb: onnxruntime threads for the encoder (default: onnxruntime's choice)
+    #[arg(long, hide = true)]
+    threads: Option<usize>,
 }
+
+#[cfg(feature = "snabb")]
+const SNABB_HELP: &str = "Snabb (Klang Pianissimo, KlangAI/pianissimo-sv, CC BY 4.0): available in this build (--model snabb).";
+#[cfg(not(feature = "snabb"))]
+const SNABB_HELP: &str = "Snabb (Klang Pianissimo): not available in this build.";
 
 enum Plan {
     /// Speech regions (frames, original timeline), each decoded with the
@@ -676,6 +693,25 @@ fn srt_time(t: f64) -> String {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if snabb::is_snabb(&args.model) {
+        return snabb::run(snabb::Opts {
+            audio: args.audio.clone(),
+            out: args.out.clone(),
+            timestamps: args.timestamps,
+            revision: args.revision.clone(),
+            vad: args.vad == "on",
+            vad_opts: vad::VadOpts {
+                min_silence: args.vad_min_silence,
+                pad: args.vad_pad,
+                threshold_db: args.vad_threshold,
+                ..Default::default()
+            },
+            chunk: snabb::chunk::ChunkOpts { core: args.snabb_window, context: args.snabb_context, ..Default::default() },
+            threads: args.threads,
+            verbose: args.verbose,
+        });
+    }
+    let revision = args.revision.as_deref().unwrap_or("main");
     let repo_id = match args.model.as_str() {
         "tiny" | "base" | "small" | "medium" | "large" => format!("KBLab/kb-whisper-{}", args.model),
         other => other.to_string(),
@@ -685,7 +721,7 @@ fn main() -> Result<()> {
 
     let t_load = Instant::now();
     let client = HFClientSync::new()?;
-    let get = |f: &str| hub_get(&client, &repo_id, &args.revision, f);
+    let get = |f: &str| hub_get(&client, &repo_id, revision, f);
     let config_path = get("config.json")?;
     let tokenizer_path = get("tokenizer.json")?;
     let gen_path = get("generation_config.json").ok();
