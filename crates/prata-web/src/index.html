@@ -354,11 +354,11 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       <!-- rendered from /api/info.picker (Snabb, Standard, Large); tiny/base/medium still work via CLI/API -->
       <div class="seg" id="modelSeg" role="group" aria-labelledby="modelLbl">
         <button type="button" data-model="small" aria-pressed="true">Standard<small>rekommenderad</small></button>
-        <button type="button" data-model="large" aria-pressed="false">Large<small>högst kvalitet</small></button>
+        <button type="button" data-model="large" aria-pressed="false">Large<small>störst</small></button>
       </div>
       <select id="model" class="pillselect" aria-labelledby="modelLbl">
         <option value="small" selected>Standard · rekommenderad</option>
-        <option value="large">Large · högst kvalitet</option>
+        <option value="large">Large · störst</option>
       </select>
       <div class="minfo hidden" id="modelInfo" aria-live="polite"></div>
     </div>
@@ -538,9 +538,9 @@ const DEFAULT_MODEL = "small";
 const FALLBACK = {   // used only when the server sends no label/description
   snabb: ["Snabb", "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar"],
   small: ["Standard", "Bästa balansen mellan kvalitet och tid"],
-  large: ["Large", "Högst kvalitet, långsammast"],
+  large: ["Large", "Största modellen, långsammast"],
 };
-const SUB = { snabb: "snabbast", small: "rekommenderad", large: "högst kvalitet" };   // short sub-label in the button
+const SUB = { snabb: "snabbast", small: "rekommenderad", large: "störst" };   // short sub-label in the button
 const SNABB_URL = "https://huggingface.co/KlangAI/pianissimo-sv";
 let modelMeta = {}, pickerIds = ["small", "large"], defaultModel = DEFAULT_MODEL, segBtns = [];
 function modelLabel(m) { return (modelMeta[m] && modelMeta[m].label) || (FALLBACK[m] || [])[0] || m || ""; }

@@ -19,14 +19,19 @@ What it does:
 5. Ctrl+C stops the server. prata-web's own log lines appear in the same terminal (or in the LaunchAgent's
    `StandardOutPath`/`StandardErrorPath` file); earlier versions wrote them to `~/.prata/prata-web.log`.
 
-The first transcription downloads the selected model from Hugging Face (small ≈ 0.6 GB, large ≈ 3 GB) into
-`~/.cache/huggingface/`. Nothing else leaves your machine.
+The first transcription with a model downloads it from Hugging Face (Snabb ≈ 0.66 GB, Standard/small ≈ 1 GB,
+Large ≈ 3.1 GB) into `~/.cache/huggingface/`. Nothing else leaves your machine.
+
+The web UI offers **Snabb** (Klang Pianissimo, fastest; macOS Apple Silicon and Linux x64), **Standard**
+(KB-Whisper small, default) and **Large** (KB-Whisper large). See the [main README](https://github.com/Malmen877/prata#models).
 
 ## Options
 
 ```
-npx prata-app [--port N] [--no-open] [--model tiny|base|small|medium|large] [--version] [--help]
+npx prata-app [--port N] [--no-open] [--model snabb|small|large|tiny|base|medium] [--version] [--help]
 ```
+
+`--model` sets the default model (`PRATA_MODEL`); the UI preselects it if it is one of `snabb`, `small`, `large`.
 
 | Environment variable | Meaning |
 |---|---|
