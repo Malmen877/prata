@@ -25,7 +25,8 @@ Needs macOS (Apple Silicon; Intel works without Snabb) or Linux x64 with glibc 2
 | **Standard** (default) | KB-Whisper small (Metal) | 133.7 s | 4.3 % |
 | **Large** | KB-Whisper large (Metal) | not measured (2.5 min clip: 119.5 s) | 4.6 % |
 
-The WER is against the original reference text. On recordings over 15 minutes the UI suggests Snabb; it switches
+The WER is against the original reference text. Large's 12.5 min WER is from a Prata 0.5.0 run on the same Mac
+(Metal, about 595 s); it was not re-measured for 0.6.1. On recordings over 15 minutes the UI suggests Snabb; it switches
 only when you click. Method, x86 numbers and corrected-reference WER: [docs/benchmarks.md](docs/benchmarks.md).
 Models in detail: [docs/models.md](docs/models.md).
 
