@@ -46,7 +46,9 @@ jobs:
       - name: Release build must not contain the test-only loopback switch
         run: "! grep -q PRATA_INSECURE_ALLOW_LOOPBACK target/release/prata-web"
       - name: Package (dry run)
-        run: scripts/package.sh ci-${{ runner.os }}
+        run: |
+          scripts/package.sh ci-${{ runner.os }}
+          tar tzf dist/prata-v*-ci-${{ runner.os }}.tar.gz | grep -qx './docs/cli.md'
 
   npm:
     runs-on: ubuntu-latest

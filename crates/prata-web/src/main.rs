@@ -157,7 +157,7 @@ usage: prata-web [--host ADDR] [--port PORT] [--notes-dir DIR]
   --url-timeout DUR download timeout for links (default 15m; env PRATA_URL_TIMEOUT)
   --yt-dlp PATH     yt-dlp binary (default: found on PATH; env PRATA_YTDLP)
 
-All other settings are environment variables, see the README.";
+All other settings are environment variables, see docs/cli.md.";
 
 /// Command-line flags override the environment.
 fn apply_args(cfg: &mut Config, args: &[String]) -> Result<()> {

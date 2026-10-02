@@ -7,7 +7,8 @@
 #     version  defaults to the workspace version in Cargo.toml
 #     bin-dir  defaults to target/release
 #
-# The archive is flat: prata, prata-web, transcribe.py, requirements.txt, LICENSE, NOTICE, README.md
+# The archive is flat: prata, prata-web, transcribe.py, requirements.txt, LICENSE, NOTICE, README.md,
+# plus docs/ (README links to docs/*.md)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 TARGET=${1:?usage: package.sh <target> [version] [bin-dir]}
@@ -22,6 +23,8 @@ for b in prata prata-web; do
   cp "$BIN_DIR/$b" "$STAGE/"
 done
 cp python/transcribe.py python/requirements.txt LICENSE NOTICE README.md "$STAGE/"
+[ -d docs ] || { echo "missing docs/ (README links to docs/*.md)" >&2; exit 1; }
+cp -R docs "$STAGE/docs"
 chmod 755 "$STAGE/prata" "$STAGE/prata-web"
 if command -v strip >/dev/null; then strip "$STAGE/prata" "$STAGE/prata-web" 2>/dev/null || true; fi
 

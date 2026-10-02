@@ -68,7 +68,7 @@ struct Args {
     batch_size: usize,
     /// KB-Whisper, experimental: pack speech into fixed ≤30 s windows cut at quiet points, so
     /// even continuous speech can be batched. Faster, but window borders differ from
-    /// the sequential decoder and some words can change (see README).
+    /// the sequential decoder and some words can change (see docs/cli.md).
     #[arg(long)]
     pack: bool,
     /// KB-Whisper: cache the decoder's self-attention keys/values between steps (same result,
