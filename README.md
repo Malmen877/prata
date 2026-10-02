@@ -58,7 +58,8 @@ converted with your local ffmpeg and transcribed. The transcript and the origina
 `~/.prata/notes/` (see [Notes](#notes)); the temporary converted files are deleted.
 The only network access is downloading the model weights from Hugging Face on first use,
 the one-time binary download when you use `npx prata-app`, and – only when you paste a link – downloading that
-link's audio. There is no telemetry.
+link's audio, and – only when you set `KLANG_API_KEY` and press **Synka från Klang** – reading your conversations
+from Klang (see [Import from Klang](#import-from-klang)). There is no telemetry.
 
 ## Build from source
 
@@ -157,15 +158,21 @@ Flags override the environment variables below. `PRATA_*` is the primary name; t
 | `PRATA_MAX_UPLOAD_MB` | `1024` | upload size limit |
 | `PRATA_VAD` | unset (CLI default `on`) | passed as `--vad` (`on`/`off`) |
 | `PRATA_BATCH_SIZE` | unset (CLI default auto) | passed as `--batch-size` |
+| `KLANG_API_KEY` | unset | enables the [Klang import](#import-from-klang) (`PRATA_KLANG_API_KEY` also works) |
+| `PRATA_KLANG_BASE_URL` | `https://app.klang.ai/api/v1` | Klang API base (for tests against a mock; `http` only for `127.0.0.1`) |
 
 HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `POST /api/jobs/url` (`{"url": "…", "model": "small"}`)
 → `{id}` or `400 {error}` for an invalid/blocked link; `GET /api/jobs/{id}` (status `downloading|queued|converting|running|done|error`,
 `download_pct`, segments, `note_id` when done, `error_user` with a readable message);
 `GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`; `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
 
-Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search word must occur in the title or transcript),
+Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search word must occur in the title, transcript or summary),
 `GET /api/notes/{id}`, `PATCH /api/notes/{id}` with `{"title": "…"}`, `DELETE /api/notes/{id}` (removes the audio too),
 `GET /api/notes/{id}/audio` (original audio, supports `Range` for seeking), `GET /api/notes/{id}/{txt|txt-ts|srt|json}`.
+
+Klang API (only when enabled, else `404`): `POST /api/klang/sync` starts a sync – or joins the one already running –
+and answers `202 {running, started_at, last}`; `GET /api/klang/sync` → `{enabled, running, last: {new, updated,
+unchanged, skipped, error, message, finished_at}}`. `GET /api/info` has `klang_enabled` (never the key).
 
 ### Notes
 
@@ -173,7 +180,8 @@ Every finished transcription is stored as a folder per note:
 
 ```
 ~/.prata/notes/<id>/note.json     title, created (unix time), model, audio duration, segments with timestamps,
-                                  source_url (only for notes made from a link)
+                                  source_url (only for notes made from a link); Klang imports also have
+                                  source "klang", summary, klang {id, updated_at} and title_edited
 ~/.prata/notes/<id>/audio.<ext>   the original upload or recording (m4a from iPhone, webm from Chrome, …)
 ```
 
@@ -207,6 +215,42 @@ no plugins, no `--exec`, playlists off, size and duration filters, and its outpu
 folder. Note that yt-dlp itself fetches the media URLs the site points to; Prata checks the link you pasted
 (and its redirects) but not those secondary requests. Anyone who can reach your Prata can make the Mac download
 things, so keep it on `127.0.0.1` + `tailscale serve` as described below.
+
+### Import from Klang
+
+If you also record meetings with [Klang](https://klang.ai), Prata can import them as notes (read-only – nothing
+is ever written to Klang, and no audio is downloaded). Create an API key in Klang and start prata-web with it:
+
+```sh
+KLANG_API_KEY=sk_… prata-web          # or add it to the LaunchAgent's EnvironmentVariables
+```
+
+The Notes list then shows **Synka från Klang**. A sync reads all conversations (following `next_cursor`
+while `has_more`, 100 per page) and reports e.g. *Klang: 2 nya, 1 uppdaterad, 14 oförändrade, 3 hoppades över.*
+Imported notes appear in the same day groups with a small **Klang** label and show Klang's summary (Markdown,
+rendered as plain formatted text – raw HTML is never inserted) above the speaker-labeled transcript. They have no
+player and no `.srt`; `.txt` and `.json` work, and `.txt med tider` when the transcript has timestamps.
+
+How re-syncs behave:
+
+- **Dedupe:** a note remembers its Klang conversation id (`klang.id` in `note.json`, folder `klang-<id>`);
+  syncing again never creates a second copy, also after a restart.
+- **Updates:** conversations whose `updated_at` hasn't changed are skipped without fetching them again.
+  Otherwise Prata fetches it and updates the note if the title, summary, transcript or date changed.
+  If you renamed the note in Prata, your title is kept; everything else follows Klang.
+- **Deleted here stays deleted:** deleting an imported note adds its Klang id to `.klang-deleted.json` in the notes
+  folder, and later syncs count it as *hoppades över*. To get it back, remove the id from that file (or delete the
+  file) and sync again.
+- Only conversations with status `ready` are imported; pending/failed ones are counted as *hoppades över*.
+- **Date:** Klang's `created_at` (`started_at` if Klang ever sends it), else `updated_at`, else the import time.
+- **Transcript:** lines like `[00:01:02] Ada: …` become timestamped segments; transcripts without timestamps
+  are shown one line per speaker turn without times.
+- **Limits and errors:** only one sync runs at a time. Klang's free plan allows 50 API calls per day (one per page
+  plus one per new or changed conversation). On HTTP 429 Prata waits `Retry-After` (up to 60 s, 3 retries);
+  longer waits stop the sync with *försök igen om …*. 5xx and network errors are retried briefly. A wrong key
+  shows *Ogiltig Klang-nyckel*. Whatever was imported before an error is kept.
+- **The key** is only sent in the `Authorization` header to the Klang API (no redirects are followed). It is never
+  written to notes, logs, error messages or API responses.
 
 ## Use it from your iPhone (Tailscale)
 
@@ -257,6 +301,8 @@ replace `kevin` with your user name):
     <!-- … and so does yt-dlp (brew install yt-dlp) for links to web pages -->
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PRATA_MODEL</key><string>small</string>
+    <!-- optional Klang import; the key is then stored in this file: chmod 600 it -->
+    <!-- <key>KLANG_API_KEY</key><string>sk_…</string> -->
   </dict>
   <key>WorkingDirectory</key><string>/Users/kevin</string>
   <key>RunAtLoad</key><true/>
