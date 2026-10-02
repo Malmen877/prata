@@ -10,6 +10,7 @@ serves a small web UI on `127.0.0.1`.
 ![Prata – finished transcript](docs/screenshot.png)
 
 - Record from the microphone or upload a file (wav, mp3, m4a, ogg, flac, opus, webm, mp4 – anything ffmpeg reads)
+- **Transcribe from a link:** paste a YouTube/SVT Play/podcast page (needs [yt-dlp](#transcribe-from-a-link)) or a direct link to an audio/video file
 - Transcript with segment timestamps, a waveform player, click-to-seek timestamps, search and copy
 - Downloads: `.txt`, `.txt` with timestamps, `.srt` subtitles, `.json`
 - Model choice tiny → large (default **small**), light and dark mode
@@ -22,6 +23,7 @@ serves a small web UI on `127.0.0.1`.
 ```bash
 # macOS
 brew install ffmpeg
+brew install yt-dlp     # optional: transcribe YouTube and other web pages
 npx prata-app
 ```
 
@@ -54,8 +56,9 @@ For accuracy figures (WER) of each size see the [KB-Whisper model card](https://
 Everything runs locally. Audio is uploaded only to the Prata server on your own machine (`127.0.0.1`),
 converted with your local ffmpeg and transcribed. The transcript and the original audio are saved as a note in
 `~/.prata/notes/` (see [Notes](#notes)); the temporary converted files are deleted.
-The only network access is downloading the model weights from Hugging Face on first use
-(and the one-time binary download when you use `npx prata-app`). There is no telemetry.
+The only network access is downloading the model weights from Hugging Face on first use,
+the one-time binary download when you use `npx prata-app`, and – only when you paste a link – downloading that
+link's audio. There is no telemetry.
 
 ## Build from source
 
@@ -75,6 +78,11 @@ cargo build --release
 ./target/release/prata recording.m4a --model small --timestamps
 ```
 
+Tests: `cargo test --release --workspace`. The link tests run against a local mock HTTP server; the real-yt-dlp
+test is skipped when yt-dlp isn't installed. The `insecure-test-loopback` cargo feature (plus
+`PRATA_INSECURE_ALLOW_LOOPBACK=1`) lets a *test build* download from 127.0.0.1 for browser end-to-end tests –
+never build releases with it.
+
 `prata-web` looks for the `prata` binary next to itself (so a workspace build or a release
 archive just works), then `$PRATA_BIN`, then `$PATH`.
 
@@ -90,7 +98,7 @@ PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.1.0-darwin-arm64.tar.gz node npm/bin/prata.
 ```
 crates/prata/       CLI (Candle whisper decoder, forced Swedish, 30 s windows, SRT output)
 crates/prata-web/   axum web server + single-file UI (src/index.html) and PWA icons (src/assets/), embedded in the binary
-                    notes storage in src/notes.rs
+                    notes storage in src/notes.rs, link downloads (SSRF checks, yt-dlp) in src/fetch.rs
 python/             optional Python fallback backend (transformers), requirements.txt
 npm/                `prata-app` launcher (pure Node, no dependencies)
 scripts/package.sh  builds the release tar.gz
@@ -125,6 +133,7 @@ Without `--timestamps` it prints plain text; with it, SRT. `--cpu` forces CPU on
 
 ```
 prata-web [--host ADDR] [--port PORT] [--notes-dir DIR]
+          [--url-max-mb MB] [--url-max-duration DUR] [--url-timeout DUR] [--yt-dlp PATH]
 ```
 
 Flags override the environment variables below. `PRATA_*` is the primary name; the older `KBW_*` names still work.
@@ -134,6 +143,10 @@ Flags override the environment variables below. `PRATA_*` is the primary name; t
 | `PRATA_WEB_PORT` | `8795` | listen port |
 | `PRATA_WEB_HOST` / `PRATA_HOST` | `127.0.0.1` | listen address (`--host`). Keep it local – there is no authentication; prata-web prints a warning for any non-loopback address |
 | `PRATA_NOTES_DIR` | `~/.prata/notes` | where notes are saved (`--notes-dir`) |
+| `PRATA_URL_MAX_MB` | `500` | size limit for links (`--url-max-mb`) |
+| `PRATA_URL_MAX_DURATION` | `3h` | duration limit for links, e.g. `3h`, `90m`, `5400` (`--url-max-duration`) |
+| `PRATA_URL_TIMEOUT` | `15m` | overall download timeout for links (`--url-timeout`) |
+| `PRATA_YTDLP` | `yt-dlp` on `$PATH` | yt-dlp binary (`--yt-dlp`) |
 | `PRATA_MODEL` | `small` | default model in the UI |
 | `PRATA_BACKEND` | `auto` | `auto` (prata, falling back to Python), `prata`, or `python` |
 | `PRATA_BIN` | next to `prata-web`, then `$PATH` | path to the `prata` CLI |
@@ -145,8 +158,10 @@ Flags override the environment variables below. `PRATA_*` is the primary name; t
 | `PRATA_VAD` | unset (CLI default `on`) | passed as `--vad` (`on`/`off`) |
 | `PRATA_BATCH_SIZE` | unset (CLI default auto) | passed as `--batch-size` |
 
-HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `GET /api/jobs/{id}` (status, segments, `note_id` when done);
-`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`.
+HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `POST /api/jobs/url` (`{"url": "…", "model": "small"}`)
+→ `{id}` or `400 {error}` for an invalid/blocked link; `GET /api/jobs/{id}` (status `downloading|queued|converting|running|done|error`,
+`download_pct`, segments, `note_id` when done, `error_user` with a readable message);
+`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`; `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
 
 Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search word must occur in the title or transcript),
 `GET /api/notes/{id}`, `PATCH /api/notes/{id}` with `{"title": "…"}`, `DELETE /api/notes/{id}` (removes the audio too),
@@ -157,7 +172,8 @@ Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search wor
 Every finished transcription is stored as a folder per note:
 
 ```
-~/.prata/notes/<id>/note.json     title, created (unix time), model, audio duration, segments with timestamps
+~/.prata/notes/<id>/note.json     title, created (unix time), model, audio duration, segments with timestamps,
+                                  source_url (only for notes made from a link)
 ~/.prata/notes/<id>/audio.<ext>   the original upload or recording (m4a from iPhone, webm from Chrome, …)
 ```
 
@@ -165,6 +181,32 @@ The default title is the local date and time plus the first words of the transcr
 Writes are atomic (temporary file + fsync + rename), so a crash never leaves a half-written note, and the folder is
 plain files: back it up with Time Machine, copy it to another Mac, or delete a folder to remove a note.
 The list is grouped by day (Idag, Igår, 28 september, …) using the browser's local time.
+
+### Transcribe from a link
+
+Paste a link in **Klistra in länk** under the record button. Prata downloads the audio on the Mac, then
+transcribes it like an upload; the note keeps the downloaded audio, gets the video/episode title as its name and
+links back to the source.
+
+- **Direct links** to audio/video files (`.mp3`, `.m4a`, `.mp4`, `.wav`, …) work out of the box.
+- **Web pages** (YouTube, SVT Play, Vimeo, most podcast pages, …) need [yt-dlp](https://github.com/yt-dlp/yt-dlp):
+  `brew install yt-dlp` (keep it updated with `brew upgrade yt-dlp`; sites change often). Prata finds it on `PATH`
+  (set `PATH` in the LaunchAgent, see below) or via `PRATA_YTDLP`, and picks it up without a restart.
+  Without it the UI shows a hint and direct links still work.
+- Limits: 500 MB, 3 hours of audio and a 15 minute download timeout by default (see the table above).
+  Live streams, private videos and pages that need a login are refused with a message.
+
+**Security.** Links are fetched by the Mac, so Prata refuses anything that is not a public internet address:
+only `http`/`https`, no `user:password@` links, and every address the host resolves to must be public –
+loopback, private (10/8, 172.16/12, 192.168/16), CGNAT/Tailscale (100.64/10), link-local (169.254/16, incl. cloud
+metadata), IPv6 unique-local/link-local, multicast, unspecified and IPv4-mapped/NAT64/6to4 forms of those are blocked.
+The check runs on the resolved addresses inside the HTTP client (the address that was checked is the one connected
+to, so DNS rebinding does not help), again on every redirect (at most 5), and no proxy settings are taken from the
+environment. yt-dlp is started without a shell, with the link as a single argument after `--`, `--ignore-config`,
+no plugins, no `--exec`, playlists off, size and duration filters, and its output must stay inside the job's temp
+folder. Note that yt-dlp itself fetches the media URLs the site points to; Prata checks the link you pasted
+(and its redirects) but not those secondary requests. Anyone who can reach your Prata can make the Mac download
+things, so keep it on `127.0.0.1` + `tailscale serve` as described below.
 
 ## Use it from your iPhone (Tailscale)
 
@@ -212,6 +254,7 @@ replace `kevin` with your user name):
   <key>EnvironmentVariables</key>
   <dict>
     <!-- ffmpeg from Homebrew lives in /opt/homebrew/bin; launchd's default PATH does not include it -->
+    <!-- … and so does yt-dlp (brew install yt-dlp) for links to web pages -->
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>PRATA_MODEL</key><string>small</string>
   </dict>
