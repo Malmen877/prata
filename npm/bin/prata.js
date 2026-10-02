@@ -67,6 +67,18 @@ function checkFfmpeg() {
   }
 }
 
+// yt-dlp is optional: only links to web pages (YouTube, SVT Play, podcasts …) need it.
+function checkYtDlp() {
+  const bin = process.env.PRATA_YTDLP || "yt-dlp";
+  const r = spawnSync(bin, ["--version"], { stdio: "ignore" });
+  if (r.error || r.status !== 0) {
+    const hint = process.platform === "darwin" ? "brew install yt-dlp" : "pipx install yt-dlp   (or your package manager)";
+    console.warn("[prata] note: yt-dlp was not found" + (process.env.PRATA_YTDLP ? ` (PRATA_YTDLP=${bin})` : " on PATH") +
+      ". Transcribing links to web pages (YouTube, SVT Play, …) needs it:\n\n  " + hint +
+      "\n\n        Direct links to audio/video files and uploads work without it.");
+  }
+}
+
 function get(url, redirects = 0) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { "User-Agent": `prata-app/${VERSION}` } }, (res) => {
@@ -215,6 +227,7 @@ async function main() {
   if (flag("--help") || flag("-h")) return usage();
   if (flag("--version") || flag("-v")) return console.log(VERSION);
   checkFfmpeg();
+  checkYtDlp();
   const dir = await ensureBinaries();
   const port = await pickPort();
   const env = { ...process.env, PRATA_WEB_PORT: String(port), PRATA_WEB_HOST: "127.0.0.1", PRATA_BIN: path.join(dir, "prata") };

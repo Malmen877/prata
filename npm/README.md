@@ -13,7 +13,8 @@ What it does:
 2. On first run, downloads `prata-v<version>-<platform>.tar.gz` from the matching GitHub Release
    (`v<version>` = this package's version), verifies its `.sha256` if present, and extracts it with
    the system `tar` into `~/.prata/<version>/`.
-3. Checks that `ffmpeg` is installed.
+3. Checks that `ffmpeg` is installed, and warns (without stopping) if `yt-dlp` is missing – it is only needed
+   for links to web pages such as YouTube (`brew install yt-dlp`); direct audio/video links work without it.
 4. Starts `prata-web` on `127.0.0.1` (port 8795, or a free port), waits until it responds and opens your browser.
 5. Ctrl+C stops the server. The server log is in `~/.prata/prata-web.log`.
 
