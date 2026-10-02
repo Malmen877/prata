@@ -71,7 +71,7 @@ function checkGlibc() {
   if (maj < MIN_GLIBC[0] || (maj === MIN_GLIBC[0] && min < MIN_GLIBC[1])) {
     die(`Prata ${VERSION} för Linux kräver glibc ${MIN_GLIBC.join(".")} eller senare (t.ex. Ubuntu 24.04, Debian 13, Fedora 40). ` +
         `Den här datorn har glibc ${v}.\n` +
-        "        Uppgradera systemet, använd prata-app@0.5.1 (utan Snabb) eller bygg från källkod: https://github.com/" + OWNER + "/" + REPO);
+        "        Uppgradera systemet, kör npx prata-app@0.5.1 (utan Snabb) eller bygg från källkod: https://github.com/" + OWNER + "/" + REPO);
   }
 }
 

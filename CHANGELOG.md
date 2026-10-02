@@ -32,7 +32,7 @@ Release and no npm package, so 0.6.1 follows 0.5.1 directly.
 ### Changed
 - **Linux x64 now needs glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Fedora 40+). The binaries are built on
   Ubuntu 24.04 because the prebuilt ONNX Runtime used for Snabb requires glibc 2.38+. Ubuntu 22.04 users can stay
-  on 0.5.1 (`npx prata-app@0.5.1`, no Snabb) or build from source; the npm launcher stops with a Swedish message
+  on 0.5.1 (`npx prata-app@0.5.1`, no Snabb) or build from source without Snabb; the npm launcher stops with a Swedish message
   on too old systems.
 - Release builds for macOS Apple Silicon and Linux x64 link ONNX Runtime statically (`snabb` cargo feature).
   macOS Intel is built without it.

@@ -31,7 +31,7 @@ npx prata-app
 On Linux install ffmpeg with `sudo apt install ffmpeg` (or your distro's package) first.
 The Linux x64 binaries need **glibc 2.39 or newer** (Ubuntu 24.04+, Debian 13+, Fedora 40+ and similar); the
 launcher says so in Swedish and stops on older systems. On Ubuntu 22.04 use 0.5.1 (`npx prata-app@0.5.1`, no Snabb)
-or build from source.
+or build from source (without Snabb: building with the `snabb` feature also needs glibc 2.38+).
 
 `npx prata-app` downloads the prebuilt binaries for your platform (macOS Apple Silicon, macOS Intel, Linux x64)
 from this repository's GitHub Release into `~/.prata/<version>/`, starts the server on a free port
@@ -161,7 +161,7 @@ cargo build --release -p prata --features metal
 cargo build --release -p prata-web
 
 # Linux / CPU
-cargo build --release
+cargo build --release          # without Snabb; add `-p prata --features snabb` (needs glibc 2.38+) for Snabb
 
 ./target/release/prata-web            # http://127.0.0.1:8795
 ./target/release/prata recording.m4a --model small --timestamps
