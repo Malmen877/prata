@@ -1850,6 +1850,7 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
         let (_, _, b) = call(&app, "GET", "/api/model-hint?duration_s=2400&model=small", None, None).await;
         let h: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_eq!(h["suggest"], "snabb", "{h}");
+        assert_eq!(h["reason"], "Lång inspelning – Snabb går betydligt fortare");
         let (_, _, b) = call(&app, "GET", "/api/model-hint?duration_s=120", None, None).await;
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["suggest"], serde_json::Value::Null);
         let id = upload(&app, "snabb").await;

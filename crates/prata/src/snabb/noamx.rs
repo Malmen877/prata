@@ -9,8 +9,11 @@
 //! MLAS enables AMX by asking the kernel for permission with
 //! `arch_prctl(ARCH_REQ_XCOMP_PERM, XFEATURE_XTILEDATA)`. A seccomp filter makes
 //! exactly that call fail with EPERM (everything else is allowed), so MLAS falls
-//! back by itself. The filter only affects this prata process (and children),
-//! which is a one-shot CLI run. `PRATA_SNABB_AMX=1` keeps AMX enabled.
+//! back by itself. The filter is installed for every thread of the process
+//! (SECCOMP_FILTER_FLAG_TSYNC) before any onnxruntime session exists, and is
+//! inherited by threads created later (the onnxruntime thread pool). It only
+//! affects this prata process (and children), which is a one-shot CLI run.
+//! `PRATA_SNABB_AMX=1` keeps AMX enabled.
 
 const ARCH_REQ_XCOMP_PERM: u32 = 0x1023;
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
@@ -39,7 +42,13 @@ pub fn disable_amx() {
     // SAFETY: plain prctl calls with a valid, live filter program.
     let ok = unsafe {
         libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0
-            && libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &fprog as *const sock_fprog) == 0
+            && (libc::syscall(
+                libc::SYS_seccomp,
+                libc::SECCOMP_SET_MODE_FILTER as libc::c_long,
+                libc::SECCOMP_FILTER_FLAG_TSYNC as libc::c_long,
+                &fprog as *const sock_fprog,
+            ) == 0
+                || libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &fprog as *const sock_fprog) == 0)
     };
     if !ok {
         eprintln!("[info] snabb: could not restrict AMX (seccomp unavailable); continuing");

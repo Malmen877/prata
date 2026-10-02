@@ -10,6 +10,9 @@ use serde::Serialize;
 /// Recordings longer than this (seconds) get the Snabb suggestion.
 pub const LONG_SECS: f64 = 15.0 * 60.0;
 
+/// Reason text shown with the suggestion (exact string, agreed with the UI).
+pub const REASON: &str = "Lång inspelning – Snabb går betydligt fortare";
+
 #[derive(Debug, Serialize, PartialEq)]
 pub struct Hint {
     /// Suggested model id, or `None`
@@ -25,10 +28,7 @@ pub fn hint(duration_s: f64, current: &str, snabb_available: bool) -> Hint {
     }
     Hint {
         suggest: Some("snabb"),
-        reason: format!(
-            "Inspelningen är {} min lång. Snabb (Klang Pianissimo) blir klar betydligt fortare.",
-            (duration_s / 60.0).round() as u64
-        ),
+        reason: REASON.to_string(),
     }
 }
 
@@ -42,7 +42,7 @@ mod tests {
         assert_eq!(hint(900.0, "small", true).suggest, None);
         let h = hint(1800.0, "small", true);
         assert_eq!(h.suggest, Some("snabb"));
-        assert!(h.reason.contains("30 min"), "{}", h.reason);
+        assert_eq!(h.reason, "Lång inspelning – Snabb går betydligt fortare");
         assert_eq!(hint(1800.0, "snabb", true).suggest, None);
         assert_eq!(hint(1800.0, "large", false).suggest, None);
         assert_eq!(hint(f64::NAN, "small", true).suggest, None);
