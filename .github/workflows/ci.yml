@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            features: ""
+          - os: macos-14
+            features: metal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          cargo build --release --locked -p prata ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+          cargo build --release --locked -p prata-web
+      - name: Test
+        run: cargo test --release --locked --workspace
+      - name: Package (dry run)
+        run: scripts/package.sh ci-${{ runner.os }}
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check npm/bin/prata.js
+      - run: node npm/bin/prata.js --help
+      - run: cd npm && npm pack --dry-run

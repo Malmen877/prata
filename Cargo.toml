@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/prata", "crates/prata-web"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Kevin Malmgren"]
+repository = "https://github.com/Malmen877/prata"
+rust-version = "1.88"
+
+[profile.release]
+opt-level = 3

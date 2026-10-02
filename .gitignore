@@ -1,0 +1,43 @@
+# build output
+/target/
+/dist/
+**/*.rs.bk
+
+# node
+node_modules/
+npm/LICENSE
+*.tgz
+
+# logs / runtime
+*.log
+server.log
+/out/
+
+# audio, models, local test data (never commit)
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.oga
+*.opus
+*.flac
+*.webm
+*.mp4
+*.safetensors
+*.bin
+*.gguf
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+.env
+.env.*

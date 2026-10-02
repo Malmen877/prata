@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Prata – svensk tal till text</title>
+<style>
+:root{
+  --bg:#FAFAF9; --surface:#FFFFFF; --surface-2:#F4F4F2; --ink:#0B0B0C; --ink-2:#55565B; --ink-3:#8C8D92;
+  --line:#E7E6E3; --line-strong:#D6D5D1; --cta:#0B0B0C; --cta-ink:#FFFFFF;
+  --rec:#E5484D; --rec-soft:#FDECEC; --ok:#1F8A5B; --ok-soft:#E8F5EE; --err:#C4302B; --err-soft:#FCEDEC;
+  --ts:#2C5CC5; --hl:#FFF1B8; --hl-cur:#FFD54A; --wave:#0B0B0C; --wave-dim:#C9C8C4;
+  --aura-1:#7FB6E8; --aura-2:#3E8C8A; --aura-3:#F2B36B; --aura-4:#C7D8F0;
+  --font:"Inter","Geist",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono","Geist Mono",Menlo,Consolas,monospace;
+  --r-sm:8px; --r-md:14px; --r-lg:24px; --r-pill:999px;
+  --sh-1:0 1px 2px rgba(11,11,12,.04),0 1px 1px rgba(11,11,12,.03);
+  --sh-2:0 12px 40px -12px rgba(11,11,12,.18),0 2px 6px rgba(11,11,12,.04);
+  --sh-rec:0 0 0 10px rgba(229,72,77,.12),0 0 0 22px rgba(229,72,77,.06);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0C0C0E; --surface:#16161A; --surface-2:#1E1E23; --ink:#F2F2F0; --ink-2:#A6A7AD; --ink-3:#6E6F76;
+  --line:#26262C; --line-strong:#34343B; --cta:#F2F2F0; --cta-ink:#0C0C0E;
+  --rec:#FF5A5F; --rec-soft:#3A1416; --ok:#3CCB8A; --ok-soft:#10291D; --err:#FF6B66; --err-soft:#3A1513;
+  --ts:#8AB4FF; --hl:#4A3D00; --hl-cur:#7A6400; --wave:#F2F2F0; --wave-dim:#3A3A42;
+  --aura-1:#2B4C78; --aura-2:#1E5452; --aura-3:#7A4A1C; --aura-4:#26304A;
+  --sh-2:0 20px 50px -16px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04);
+}}
+*{box-sizing:border-box} html{-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 15px/1.55 var(--font);letter-spacing:-.005em}
+.wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+.hidden{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+:focus-visible{outline:3px solid var(--ts);outline-offset:2px}
+button,a,input,select{font:inherit;color:inherit}
+/* header */
+header{display:flex;align-items:center;justify-content:space-between;height:64px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.02em}
+.brand i{display:inline-flex;gap:2px;align-items:center;height:18px}.brand i b{width:3px;border-radius:2px;background:var(--ink)}
+/* hero */
+.hero{padding:56px 0 28px;display:grid;grid-template-columns:1.1fr 1fr;gap:32px;align-items:end}
+.eyebrow{font-size:13px;color:var(--ink-3);margin:0 0 12px}
+h1{font-size:48px;line-height:1.05;letter-spacing:-.035em;font-weight:500;margin:0}
+.lede{color:var(--ink-2);font-size:16px;line-height:1.6;margin:0;max-width:40ch}
+/* stage */
+.stage{position:relative;border-radius:var(--r-lg);overflow:hidden;padding:56px 24px;isolation:isolate}
+.stage::before{content:"";position:absolute;inset:-20%;z-index:-1;filter:blur(60px) saturate(1.1);
+  background:radial-gradient(40% 50% at 20% 30%,var(--aura-1),transparent 70%),radial-gradient(35% 45% at 80% 25%,var(--aura-3),transparent 70%),
+  radial-gradient(45% 55% at 65% 85%,var(--aura-2),transparent 70%),radial-gradient(50% 60% at 30% 90%,var(--aura-4),transparent 70%),var(--bg)}
+.stage::after{content:"";position:absolute;inset:0;z-index:-1;opacity:.18;mix-blend-mode:overlay;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+.recorder{max-width:640px;margin:0 auto;background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-2);padding:28px 32px 24px;text-align:center}
+.rtop{display:flex;flex-direction:column;align-items:center;margin-bottom:36px;gap:8px}
+.rlabel{font-size:12px;color:var(--ink-3);letter-spacing:.02em}
+/* segmented model picker */
+.seg{display:inline-flex;padding:4px;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--surface);gap:2px}
+.seg button{all:unset;cursor:pointer;padding:7px 16px;min-width:64px;border-radius:var(--r-pill);font-size:13.5px;font-weight:500;color:var(--ink-3);display:flex;flex-direction:column;align-items:center;line-height:1.15;transition:background .15s,color .15s}
+.seg button small{font-size:11px;font-weight:400;color:var(--ink-3);opacity:.85}
+.seg button:hover{color:var(--ink-2)}
+.seg button[aria-pressed=true]{background:var(--surface-2);color:var(--ink);box-shadow:var(--sh-1),inset 0 0 0 1px var(--line-strong)}
+.seg button[aria-pressed=true] small{color:var(--ink-2)}
+.seg button:focus-visible{outline:3px solid var(--ts);outline-offset:1px}
+.seg button:disabled{cursor:not-allowed}
+.pillselect{display:none;appearance:none;-webkit-appearance:none;height:36px;padding:0 34px 0 16px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238C8D92' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 14px center;font-size:13.5px;font-weight:500;color:var(--ink)}
+.is-off{opacity:.5;pointer-events:none}
+/* record button */
+.recbtn{all:unset;cursor:pointer;width:96px;height:96px;border-radius:50%;display:grid;place-items:center;background:var(--cta);color:var(--cta-ink);margin:0 auto;transition:transform .15s,box-shadow .3s,background .15s;position:relative}
+.recbtn:hover{transform:scale(1.03)}
+.recbtn:focus-visible{outline:3px solid var(--ts);outline-offset:4px}
+.recbtn svg{width:34px;height:34px}
+.recbtn .sq{display:none;width:28px;height:28px;border-radius:6px;background:#fff}
+.recbtn .ring{display:none;width:34px;height:34px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--ink);animation:spin .8s linear infinite}
+.recbtn.on{background:var(--rec);color:#fff;animation:pulse 1.6s ease-in-out infinite}
+.recbtn.on .sq{display:block}.recbtn.on .mic{display:none}
+.recbtn.busy{background:var(--surface-2);color:var(--ink);cursor:default;transform:none}
+.recbtn.busy .mic{display:none}.recbtn.busy .ring{display:block}
+.recbtn:disabled:not(.busy){opacity:.4;cursor:not-allowed;transform:none}
+.recbtn.flash{box-shadow:0 0 0 10px var(--ok-soft)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(229,72,77,.28)}50%{box-shadow:var(--sh-rec)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.status{display:flex;justify-content:center;align-items:center;gap:10px;margin:30px 0 8px;font-size:14px;color:var(--ink-2);min-height:22px;flex-wrap:wrap}
+.status.idle{color:var(--ink-3)}
+.live{display:inline-flex;align-items:center;gap:6px;color:var(--rec);font-weight:500}
+.live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--rec);animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.25}}
+.timer{font:500 28px/1 var(--mono);letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+canvas.wave{display:block;width:100%;height:72px;margin:14px 0 4px;transition:opacity .3s}
+canvas.wave.frozen{opacity:.35}
+.meter{width:200px;height:6px;margin:12px auto;background:var(--surface-2);border-radius:var(--r-pill);overflow:hidden}
+.meter>div{height:100%;width:0;background:var(--ink);transition:width .05s}
+/* drop zone */
+.drop{margin-top:22px;border:1.5px dashed var(--line-strong);border-radius:var(--r-md);padding:16px;display:flex;align-items:center;justify-content:center;gap:12px;color:var(--ink-2);font-size:14px;cursor:pointer;transition:.15s;text-align:left}
+.drop:hover,.drop.over{border-color:var(--ink);background:var(--surface-2);color:var(--ink)}
+.drop:focus-visible{outline:3px solid var(--ts);outline-offset:2px}
+.drop u{text-decoration:none;color:var(--ink);font-weight:500;border-bottom:1px solid currentColor}
+.drop small{display:block;color:var(--ink-3);font-size:12px}
+.drop .dtext{min-width:0}
+.drop.has-file{justify-content:space-between}
+.drop.has-file .dicon{flex:none}
+.drop .fname{color:var(--ink);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drop .grow{flex:1;min-width:0;display:flex;align-items:center;gap:12px}
+/* generic */
+section{margin:40px 0}
+h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--sh-1)}
+.meta{font-size:13px;color:var(--ink-3);line-height:1.4}
+.btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:var(--r-pill);font-size:13.5px;font-weight:500;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);white-space:nowrap;transition:background .15s;box-sizing:border-box}
+.btn:hover{background:var(--surface-2)}
+.btn:focus-visible{outline:3px solid var(--ts);outline-offset:2px}
+.btn.primary{background:var(--cta);color:var(--cta-ink);border-color:var(--cta)}
+.btn.primary:hover{opacity:.88}
+.btn small{color:var(--ink-3);font-weight:400;font-size:12px}.btn.primary small{color:inherit;opacity:.7}
+.btn.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+.err{display:block;padding:14px 16px;border-radius:var(--r-md);background:var(--err-soft);color:var(--err);font-size:14px;margin-top:12px;text-align:left;line-height:1.5}
+.err b{font-weight:600;margin-right:6px}.err span{color:var(--ink-2)}
+.empty{padding:40px 24px;text-align:center;color:var(--ink-3);font-size:14px}
+/* processing card */
+.proc{padding:20px 24px;display:grid;grid-template-columns:1fr auto;gap:10px 20px;align-items:center}
+.proc .ttl{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.proc .ttl b{font-weight:500}
+.proc.failed .ttl b{color:var(--err)}
+.spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-strong);border-top-color:var(--ink);animation:spin .8s linear infinite;flex:none}
+.bar{grid-column:1/-1;height:6px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;position:relative}
+.bar>i{display:block;height:100%;width:0;background:var(--ink);border-radius:inherit;position:relative;overflow:hidden;transition:width .4s}
+.bar>i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);animation:sheen 1.4s linear infinite}
+.bar.indet>i{width:40%;position:absolute;left:0;animation:indet 1.6s ease-in-out infinite}
+.proc.failed .bar>i{background:var(--err);width:100%;animation:none;position:relative}
+.proc.failed .bar>i::after,.proc.done .bar>i::after{display:none}
+@keyframes sheen{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@keyframes indet{0%{left:-40%}100%{left:100%}}
+.steps{grid-column:1/-1;display:flex;gap:18px;font-size:12.5px;color:var(--ink-3);flex-wrap:wrap}
+.steps span.done{color:var(--ok)}.steps span.cur{color:var(--ink);font-weight:500}
+.proc .full{grid-column:1/-1}
+.proc .err{margin-top:0}
+.conn{display:inline-flex;align-items:center;gap:6px}
+.conn::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ink-3);animation:blink 1s steps(2) infinite}
+/* result */
+.res-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:24px 24px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.res-head h2{font-size:20px;line-height:1.3;letter-spacing:-.02em;font-weight:500;margin:0 0 4px;word-break:break-all}
+.dls{display:flex;gap:8px;flex-wrap:wrap}
+.player{display:flex;align-items:center;gap:14px;padding:16px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.play{all:unset;cursor:pointer;width:40px;height:40px;border-radius:50%;background:var(--cta);color:var(--cta-ink);display:grid;place-items:center;flex:none}
+.play:focus-visible{outline:3px solid var(--ts);outline-offset:3px}
+.play .pause{display:none}.play.playing .pause{display:block}.play.playing .tri{display:none}
+.player canvas{flex:1;height:40px;min-width:0;cursor:pointer;display:block;border-radius:4px}
+.player .t{font:13px var(--mono);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.player audio{flex:1;min-width:0}
+.tools{display:flex;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line);align-items:center}
+.search{flex:1;display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-3);font-size:14px}
+.search:focus-within{box-shadow:0 0 0 3px var(--ts)}
+.search input{all:unset;flex:1;min-width:0;color:var(--ink);font-size:14px}
+.search input::placeholder{color:var(--ink-3)}
+.hits{font-size:13px;color:var(--ink-3);white-space:nowrap;min-width:5em;text-align:right}
+.segs{padding:8px 12px 16px}
+.seg-row{display:grid;grid-template-columns:96px 1fr auto;gap:16px;padding:10px 12px;border-radius:var(--r-md);align-items:baseline;transition:background .15s;scroll-margin:80px 0}
+.seg-row:hover{background:var(--surface-2)}
+.seg-row .ts{all:unset;cursor:pointer;font:12.5px var(--mono);color:var(--ts);font-variant-numeric:tabular-nums;border-radius:4px}
+.seg-row .ts:hover{text-decoration:underline}
+.seg-row .ts:focus-visible{outline:3px solid var(--ts);outline-offset:3px}
+.seg-row p{margin:0;font-size:16px;line-height:1.6;max-width:68ch}
+.seg-row .cp{all:unset;cursor:pointer;opacity:0;font-size:12px;color:var(--ink-3);transition:opacity .15s;border-radius:4px}
+.seg-row:hover .cp,.seg-row .cp:focus-visible{opacity:1}
+.seg-row .cp:hover{color:var(--ink)}
+.seg-row.active{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--ink)}
+.seg-row.none{display:block;color:var(--ink-3)}
+mark{background:var(--hl);color:inherit;border-radius:3px;padding:0 2px}
+mark.cur{background:var(--hl-cur);box-shadow:0 0 0 1px var(--ink-3)}
+@media (max-width:760px){.hero{grid-template-columns:1fr;padding-top:40px}h1{font-size:36px}.seg-row{grid-template-columns:1fr;gap:4px}.seg-row .cp{opacity:1;justify-self:start}.recorder{padding:24px 18px 20px}.stage{padding:32px 12px}}
+@media (max-width:520px){.seg{display:none}.pillselect{display:inline-block}.player{padding:12px 16px}.tools,.res-head{padding-left:16px;padding-right:16px}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
+  .recbtn.on{box-shadow:var(--sh-rec)}.bar.indet>i{left:30%}.spin,.recbtn .ring{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand" aria-label="Prata"><i aria-hidden="true"><b style="height:8px"></b><b style="height:16px"></b><b style="height:11px"></b><b style="height:18px"></b><b style="height:7px"></b></i>Prata</div>
+</header>
+
+<div class="hero">
+  <div>
+    <p class="eyebrow">Svensk tal till text · helt lokalt</p>
+    <h1>Prata. Vi skriver.<br>Allt stannar på din dator.</h1>
+  </div>
+  <p class="lede">Spela in direkt eller släpp en ljudfil. Transkriberingen körs lokalt – inget ljud lämnar datorn.</p>
+</div>
+
+<main>
+<div class="stage">
+  <div class="recorder">
+    <div class="rtop" id="modelBox">
+      <div class="rlabel" id="modelLbl">Modell</div>
+      <div class="seg" id="modelSeg" role="group" aria-labelledby="modelLbl">
+        <button type="button" data-model="tiny" aria-pressed="false">tiny<small>snabbast</small></button>
+        <button type="button" data-model="base" aria-pressed="false">base<small>snabb</small></button>
+        <button type="button" data-model="small" aria-pressed="true">small<small>rekommenderad</small></button>
+        <button type="button" data-model="medium" aria-pressed="false">medium<small>bättre</small></button>
+        <button type="button" data-model="large" aria-pressed="false" title="Långsam och minneskrävande på CPU">large<small>bäst kvalitet</small></button>
+      </div>
+      <select id="model" class="pillselect" aria-labelledby="modelLbl">
+        <option value="tiny">tiny · snabbast</option>
+        <option value="base">base · snabb</option>
+        <option value="small" selected>small · rekommenderad</option>
+        <option value="medium">medium · bättre</option>
+        <option value="large" title="Långsam och minneskrävande på CPU">large · bäst kvalitet</option>
+      </select>
+    </div>
+
+    <button type="button" class="recbtn" id="rec" aria-describedby="recStatus">
+      <svg class="mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span class="sq" aria-hidden="true"></span>
+      <span class="ring" aria-hidden="true"></span>
+      <span class="sr-only" id="recLabel">Spela in</span>
+    </button>
+    <div class="status idle" id="recStatus" aria-live="polite">Tryck för att spela in · eller släpp en fil nedan</div>
+    <div class="timer" id="recTime" role="timer" aria-label="Inspelningstid">00:00</div>
+    <canvas class="wave" id="wave" aria-hidden="true"></canvas>
+    <div class="meter hidden" id="meter" aria-hidden="true"><div id="level"></div></div>
+    <div class="err hidden" id="recErr" role="alert"></div>
+
+    <div class="drop" id="drop" role="button" tabindex="0" aria-label="Välj en ljudfil eller dra och släpp den här">
+      <div class="grow">
+        <svg class="dicon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+        <div class="dtext" id="dropText"><u>Välj en ljudfil</u> eller dra och släpp den här<small>wav, mp3, m4a, ogg, flac, opus, webm, mp4</small></div>
+        <div class="dtext hidden" id="dropFile"><div class="fname" id="fname"></div><small id="fsize"></small></div>
+      </div>
+      <button type="button" class="btn primary hidden" id="go">Transkribera</button>
+      <input type="file" id="file" accept="audio/*,video/*,.m4a,.oga,.ogg,.opus,.flac,.webm" hidden>
+    </div>
+  </div>
+</div>
+
+<section class="hidden" id="statusSec" aria-labelledby="procH">
+  <h3 id="procH">Bearbetar</h3>
+  <div class="card proc" id="statusCard" aria-live="polite">
+    <div class="ttl"><span class="spin" id="spin" aria-hidden="true"></span><b id="statusText">Laddar upp …</b> <span class="meta" id="procFile"></span></div>
+    <div class="meta" id="elapsed"></div>
+    <div class="bar indet" id="bar" role="progressbar" aria-label="Förlopp"><i id="barFill"></i></div>
+    <div class="steps" id="steps"></div>
+    <div class="meta full hidden" id="conn"><span class="conn">Tappade kontakt med servern, försöker igen …</span></div>
+    <div class="full hidden" id="errBox"><div class="err" id="err" role="alert"></div>
+      <div style="margin-top:12px"><button type="button" class="btn" id="retry">Försök igen</button></div></div>
+  </div>
+</section>
+
+<section aria-label="Transkription">
+  <div class="card empty" id="empty">Ingen transkription än. Spela in eller släpp en fil ovan så visas texten här.</div>
+  <div class="card hidden" id="resultCard">
+    <div class="res-head">
+      <div style="min-width:0"><h2 id="resTitle"></h2><div class="meta" id="meta"></div></div>
+      <div class="dls">
+        <button type="button" class="btn primary" id="copy">Kopiera text</button>
+        <a class="btn" id="dlTxt" download>.txt</a>
+        <a class="btn" id="dlTxtTs" download>.txt <small>med tider</small></a>
+        <a class="btn" id="dlSrt" download>.srt</a>
+        <a class="btn" id="dlJson" download>.json</a>
+      </div>
+    </div>
+    <div class="player" id="playerBar">
+      <button type="button" class="play" id="play" aria-label="Spela upp">
+        <svg class="tri" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>
+        <svg class="pause" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="1.5" width="3" height="11" rx="1" fill="currentColor"/><rect x="8.5" y="1.5" width="3" height="11" rx="1" fill="currentColor"/></svg>
+      </button>
+      <canvas id="scrub" role="slider" tabindex="0" aria-label="Spelposition" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
+      <audio id="player" preload="metadata" class="hidden"></audio>
+      <span class="t" id="ptime">00:00 / 00:00</span>
+    </div>
+    <div class="meta hidden" id="noAudio" style="padding:14px 24px;border-bottom:1px solid var(--line)">Ljudet kan inte spelas upp i den här webbläsaren – tidsstämplarna och nedladdningarna fungerar ändå.</div>
+    <div class="tools">
+      <label class="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <span class="sr-only">Sök i texten</span><input type="search" id="search" placeholder="Sök i texten" autocomplete="off" aria-describedby="hits"></label>
+      <span class="hits" id="hits" aria-live="polite"></span>
+    </div>
+    <div class="segs" id="segs"></div>
+  </div>
+</section>
+</main>
+<div style="height:40px"></div>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let hideProcT = null;
+let file = null, jobId = null, timer = null, lastJob = null, lastMedia = null, busy = false;
+const STATUS = { uploading: "Laddar upp …", queued: "I kö …", converting: "Konverterar ljud …", running: "Transkriberar …", done: "Klar", error: "Något gick fel" };
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const pad = n => String(n).padStart(2, "0");
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const dec1 = x => (x || 0).toFixed(1).replace(".", ",");
+
+function fmt(t) {            // [hh:]mm:ss.mmm
+  t = Math.max(0, t || 0);
+  const ms = Math.round(t * 1000), h = Math.floor(ms / 3600000), m = Math.floor(ms % 3600000 / 60000),
+        s = Math.floor(ms % 60000 / 1000), r = ms % 1000;
+  return (h ? pad(h) + ":" : "") + pad(m) + ":" + pad(s) + "." + String(r).padStart(3, "0");
+}
+function fmtShort(t) {       // [h:]mm:ss
+  t = Math.max(0, Math.floor(t || 0));
+  const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (h ? h + ":" : "") + pad(m) + ":" + pad(s);
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+// ------------------------------------------------------------ server defaults
+async function loadInfo() {
+  try { const i = await (await fetch("/api/info")).json(); if (i.default_model) setModel(i.default_model); } catch (_) {}
+}
+
+// ------------------------------------------------------------ model picker (drives hidden/compact <select id="model">)
+const segBtns = [...document.querySelectorAll("#modelSeg button")];
+function setModel(m) {
+  const sel = $("model");
+  if (![...sel.options].some(o => o.value === m)) { const o = new Option(m, m); sel.add(o); }
+  sel.value = m;
+  segBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.model === m)));
+}
+segBtns.forEach((b, i) => {
+  b.onclick = () => setModel(b.dataset.model);
+  b.onkeydown = e => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const n = segBtns[(i + d + segBtns.length) % segBtns.length];
+    n.focus(); setModel(n.dataset.model);
+  };
+});
+$("model").onchange = e => setModel(e.target.value);
+
+// ------------------------------------------------------------ file pick / drop zone
+function pick(f) {
+  file = f || null;
+  $("drop").classList.toggle("has-file", !!file);
+  $("dropText").classList.toggle("hidden", !!file);
+  $("dropFile").classList.toggle("hidden", !file);
+  $("go").classList.toggle("hidden", !file);
+  if (file) {
+    $("fname").textContent = file.name;
+    $("fsize").textContent = (file.size >= 1048576 ? (file.size / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(file.size / 1024)) + " kB") + " · tryck Transkribera";
+  }
+  $("go").disabled = !file || busy;
+}
+const drop = $("drop");
+drop.onclick = e => { if (e.target.closest("#go")) return; $("file").click(); };
+drop.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target === drop) { e.preventDefault(); $("file").click(); } };
+$("file").onchange = e => { pick(e.target.files[0]); e.target.value = ""; };
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); if (!drop.classList.contains("is-off")) drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { if (!drop.classList.contains("is-off") && e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
+$("go").onclick = e => { e.stopPropagation(); if (file && !busy) { const f = file; pick(null); $("recTime").textContent = "00:00"; startJob(f, f.name); } };
+
+// ------------------------------------------------------------ recorder UI state
+function setRecState(state, extra) {   // idle | recording | processing | done
+  const btn = $("rec"), st = $("recStatus");
+  btn.classList.toggle("on", state === "recording");
+  btn.classList.toggle("busy", state === "processing");
+  btn.disabled = state === "processing" || !recSupported;
+  const label = state === "recording" ? "Stoppa" : state === "processing" ? "Transkriberar" : "Spela in";
+  $("recLabel").textContent = label; btn.setAttribute("aria-label", state === "recording" ? "Stoppa inspelning" : label);
+  const off = state === "recording" || state === "processing";
+  $("modelBox").classList.toggle("is-off", off);
+  segBtns.forEach(b => b.disabled = off); $("model").disabled = off;
+  drop.classList.toggle("is-off", off); drop.setAttribute("aria-disabled", String(off)); drop.tabIndex = off ? -1 : 0;
+  $("go").disabled = off || !file;
+  st.classList.toggle("idle", state === "idle");
+  if (state === "recording") st.innerHTML = '<span class="live">Spelar in</span><span aria-hidden="true">·</span><span>Tryck för att stoppa och transkribera</span>';
+  else if (state === "processing") st.textContent = "Transkriberar …";
+  else if (state === "done") st.textContent = extra;
+  else st.textContent = "Tryck för att spela in · eller släpp en fil nedan";
+  $("wave").classList.toggle("frozen", state === "processing");
+  if (state === "idle" || state === "done") { hist = []; drawWave(); }
+}
+
+// ------------------------------------------------------------ jobs
+function setSteps(status) {
+  const order = ["queued", "converting", "running", "done"];
+  const labels = ["Uppladdad", "Konverterad", "Transkriberar", "Klar"];
+  const idx = status === "uploading" ? -1 : order.indexOf(status);
+  $("steps").innerHTML = labels.map((l, i) => {
+    let cls = "", pre = "";
+    if (status === "done" || i < idx || (i === 0 && idx >= 0)) { cls = "done"; pre = "✓ "; }
+    else if (i === idx || (idx === -1 && i === 0)) { cls = "cur"; pre = "● "; }
+    if (i === 0 && idx === -1) l = "Laddar upp";
+    return `<span class="${cls}">${pre}${l}${cls === "cur" && curPct != null ? " " + curPct + " %" : ""}</span>`;
+  }).join("");
+}
+let curPct = null;
+function setBar(pct, failed) {
+  const bar = $("bar"), fill = $("barFill");
+  if (pct == null) { bar.classList.add("indet"); fill.style.width = ""; bar.removeAttribute("aria-valuenow"); }
+  else { bar.classList.remove("indet"); fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", pct); }
+}
+function progressPct(j) {
+  if (j.status === "done") return 100;
+  if (j.status !== "running") return null;
+  const lines = (j.log_tail || []).concat(j.progress || "");
+  let pct = null;
+  for (const l of lines) {
+    const w = /window\s+(\d+(?:\.\d+)?)s\s+done/.exec(l);          // prata: "[info] window 30.0s done in 9.1s"
+    if (w && j.audio_duration) pct = Math.min(99, Math.round((parseFloat(w[1]) + 30) / j.audio_duration * 100));
+    const p = /(\d{1,3})\s?%/.exec(l);                              // tqdm style "45%"
+    if (p && +p[1] <= 100) pct = +p[1];
+  }
+  return pct;
+}
+
+async function startJob(blob, filename) {
+  if (busy) return;
+  clearInterval(timer); clearTimeout(hideProcT);
+  busy = true; lastMedia = { blob, filename }; curPct = null;
+  setRecState("processing");
+  $("resultCard").classList.add("hidden"); $("empty").classList.add("hidden");
+  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
+  $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
+  $("statusText").textContent = STATUS.uploading; $("procFile").textContent = filename;
+  $("elapsed").textContent = $("model").value; setSteps("uploading"); setBar(null);
+  const fd = new FormData(); fd.append("model", $("model").value); fd.append("file", blob, filename);
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", body: fd });
+    let j = {}; try { j = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(j.error || r.status + " " + r.statusText);
+    jobId = j.id; poll(); timer = setInterval(poll, 1500);
+  } catch (e) { jobFailed("Uppladdningen misslyckades.", "Kontrollera att Prata fortfarande körs och försök igen."); }
+}
+
+function humanError(msg) {
+  msg = msg || "";
+  if (/ffmpeg|avkoda|decode/i.test(msg)) return "Filen kunde inte läsas som ljud. Prova en annan fil eller ett annat format.";
+  if (/ingen fil|tom/i.test(msg)) return "Filen verkar vara tom.";
+  if (/minne|memory|killed|signal/i.test(msg)) return "Datorn fick slut på minne. Prova en mindre modell.";
+  return "Något gick fel vid transkriberingen. Försök igen, eller välj en mindre modell.";
+}
+function jobFailed(lead, text) {
+  clearInterval(timer); busy = false;
+  $("statusCard").classList.add("failed");
+  $("statusText").textContent = STATUS.error; $("spin").classList.add("hidden");
+  setBar(100, true); $("conn").classList.add("hidden");
+  $("err").innerHTML = `<b>${esc(lead)}</b><span>${esc(text)}</span>`;
+  $("errBox").classList.remove("hidden");
+  setRecState("idle");
+  if (!lastJob) $("empty").classList.remove("hidden");
+}
+$("retry").onclick = () => { if (lastMedia && !busy) startJob(lastMedia.blob, lastMedia.filename); };
+
+async function poll() {
+  let j;
+  try { const r = await fetch("/api/jobs/" + jobId); j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); }
+  catch (e) { $("conn").classList.remove("hidden"); return; }
+  $("conn").classList.add("hidden");
+  if (j.status === "error") return jobFailed("Transkriberingen misslyckades.", humanError(j.error));
+  curPct = progressPct(j);
+  $("statusText").textContent = STATUS[j.status] || j.status;
+  $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
+  $("elapsed").textContent = `${Math.round(j.elapsed_s)} s · ${j.model}`;
+  setSteps(j.status); setBar(curPct);
+  if (j.status === "done") {
+    clearInterval(timer); busy = false;
+    $("statusCard").classList.add("done"); $("spin").classList.add("hidden");
+    setRecState("done", `Klar · ${dec1(j.elapsed_s)} s för ${fmtShort(j.audio_duration)} ljud`);
+    flashDone();
+    render(j);
+    hideProcT = setTimeout(() => { if (!busy) $("statusSec").classList.add("hidden"); }, 1200);
+    $("resultCard").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  }
+}
+function flashDone() { const b = $("rec"); b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 600); }
+
+// ------------------------------------------------------------ result / transcript
+let segData = [], activeIdx = -1, markEls = [], markIdx = -1;
+function render(j) {
+  lastJob = j; segData = j.segments || []; activeIdx = -1;
+  $("resTitle").textContent = j.filename.replace(/\.[^.]+$/, "");
+  $("resTitle").title = j.filename;
+  const words = (j.segments || []).reduce((n, s) => n + (s.text.trim() ? s.text.trim().split(/\s+/).length : 0), 0);
+  $("meta").textContent = [fmtShort(j.audio_duration) + " ljud", words + " ord", "modell " + j.model].join(" · ");
+  const base = `/api/jobs/${j.id}/`, stem = j.filename.replace(/\.[^.]+$/, "");
+  [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
+    .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
+  $("search").value = ""; renderSegs("");
+  $("resultCard").classList.remove("hidden"); $("empty").classList.add("hidden");
+  loadMedia(lastMedia && lastMedia.blob, j.audio_duration);
+}
+
+function highlight(text, q) {
+  if (!q) return esc(text);
+  const lt = text.toLocaleLowerCase("sv"), lq = q.toLocaleLowerCase("sv");
+  if (lt.length !== text.length) return esc(text);
+  let out = "", i = 0, k;
+  while ((k = lt.indexOf(lq, i)) !== -1) { out += esc(text.slice(i, k)) + "<mark>" + esc(text.slice(k, k + q.length)) + "</mark>"; i = k + q.length; }
+  return out + esc(text.slice(i));
+}
+function renderSegs(q) {
+  const segs = $("segs");
+  if (!segData.length || segData.every(s => !s.text.trim())) {
+    segs.innerHTML = '<div class="seg-row none">(ingen text hittades i ljudet)</div>';
+  } else {
+    segs.innerHTML = segData.map((s, i) =>
+      `<div class="seg-row${i === activeIdx ? " active" : ""}" data-i="${i}">` +
+      `<button type="button" class="ts" data-i="${i}" title="${fmt(s.start)} – ${fmt(s.end)}" aria-label="Spela från ${fmt(s.start)}">${fmt(s.start)}</button>` +
+      `<p>${highlight(s.text.trim(), q)}</p>` +
+      `<button type="button" class="cp" data-i="${i}" aria-label="Kopiera segmentet">Kopiera</button></div>`).join("");
+  }
+  markEls = [...segs.querySelectorAll("mark")]; markIdx = -1;
+  $("hits").textContent = q ? (markEls.length === 1 ? "1 träff" : markEls.length + " träffar") : "";
+}
+$("search").addEventListener("input", e => renderSegs(e.target.value.trim()));
+$("search").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.target.value = ""; renderSegs(""); return; }
+  if (e.key !== "Enter" || !markEls.length) return;
+  e.preventDefault();
+  if (markIdx >= 0) markEls[markIdx].classList.remove("cur");
+  markIdx = (markIdx + (e.shiftKey ? -1 : 1) + markEls.length) % markEls.length;
+  const m = markEls[markIdx]; m.classList.add("cur");
+  m.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  $("hits").textContent = `${markIdx + 1} av ${markEls.length} träffar`;
+});
+$("segs").addEventListener("click", e => {
+  const ts = e.target.closest(".ts"), cp = e.target.closest(".cp");
+  if (ts) { const s = segData[+ts.dataset.i]; seekTo(s.start + 0.001, true); setActive(+ts.dataset.i, false); }
+  if (cp) copyText(segData[+cp.dataset.i].text.trim(), cp, "Kopierat ✓");
+});
+
+// ------------------------------------------------------------ clipboard
+async function copyText(text, btn, okLabel) {
+  let ok = false;
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; } } catch (_) {}
+  if (!ok) {
+    const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:-1000px;opacity:0"; document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (_) {} ta.remove();
+  }
+  const old = btn.dataset.label || btn.innerHTML; btn.dataset.label = old;
+  btn.textContent = ok ? okLabel : "Kunde inte kopiera";
+  clearTimeout(btn._t); btn._t = setTimeout(() => { btn.innerHTML = old; delete btn.dataset.label; }, 1500);
+}
+$("copy").onclick = () => copyText((lastJob && lastJob.text || "").trim(), $("copy"), "Kopierat ✓");
+
+// ------------------------------------------------------------ player with waveform scrubber
+const audio = $("player"), scrub = $("scrub");
+let peaks = null, mediaDur = 0, mediaUrl = null, rafPlay = null, decodeToken = 0;
+function duration() { return isFinite(audio.duration) && audio.duration > 0 ? audio.duration : mediaDur; }
+function setupCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  return { c, w, h };
+}
+function rr(c, x, y, w, h, r) { c.beginPath(); if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h); c.fill(); }
+function drawScrub() {
+  if (!scrub.clientWidth) return;
+  const { c, w, h } = setupCanvas(scrub), d = duration(), frac = d ? Math.min(1, audio.currentTime / d) : 0;
+  const on = css("--wave"), off = css("--wave-dim");
+  if (peaks) {
+    const n = peaks.length, gap = 2, bw = Math.max(1.5, (w - gap * (n - 1)) / n);
+    for (let i = 0; i < n; i++) {
+      const bh = Math.max(3, peaks[i] * h * 0.95);
+      c.fillStyle = (i + 0.5) / n <= frac ? on : off;
+      rr(c, i * (bw + gap), (h - bh) / 2, bw, bh, bw / 2);
+    }
+  } else {   // fallback: plain progress bar
+    c.fillStyle = css("--surface-2"); rr(c, 0, h / 2 - 3, w, 6, 3);
+    c.fillStyle = on; rr(c, 0, h / 2 - 3, Math.max(6, w * frac), 6, 3);
+  }
+  $("ptime").textContent = `${fmtShort(audio.currentTime)} / ${fmtShort(d)}`;
+  scrub.setAttribute("aria-valuemax", Math.round(d)); scrub.setAttribute("aria-valuenow", Math.round(audio.currentTime));
+  scrub.setAttribute("aria-valuetext", `${fmtShort(audio.currentTime)} av ${fmtShort(d)}`);
+}
+async function loadMedia(blob, jobDur) {
+  const token = ++decodeToken;
+  audio.pause();
+  if (mediaUrl) { audio.removeAttribute("src"); audio.load(); URL.revokeObjectURL(mediaUrl); mediaUrl = null; }
+  peaks = null; mediaDur = jobDur || 0;
+  $("playerBar").classList.toggle("hidden", !blob); $("noAudio").classList.toggle("hidden", !!blob);
+  if (!blob) return;
+  mediaUrl = URL.createObjectURL(blob); audio.src = mediaUrl; audio.load();
+  scrub.classList.remove("hidden"); audio.classList.add("hidden"); audio.controls = false;
+  drawScrub();
+  if (blob.size > 200 * 1048576) return;          // too big to decode in the browser → progress bar
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) throw new Error("no AudioContext");
+    const ac = new AC(), buf = await blob.arrayBuffer();
+    const ab = await new Promise((res, rej) => { const p = ac.decodeAudioData(buf, res, rej); if (p && p.then) p.then(res, rej); });
+    ac.close && ac.close().catch(() => {});
+    if (token !== decodeToken) return;
+    const ch = ab.getChannelData(0), N = 140, step = Math.max(1, Math.floor(ch.length / N)), out = new Float32Array(N);
+    let max = 0;
+    for (let i = 0; i < N; i++) {
+      let p = 0; const s0 = i * step, s1 = Math.min(ch.length, s0 + step);
+      for (let k = s0; k < s1; k += 4) { const v = Math.abs(ch[k]); if (v > p) p = v; }
+      out[i] = p; if (p > max) max = p;
+    }
+    for (let i = 0; i < N; i++) out[i] = max ? Math.pow(out[i] / max, 0.8) : 0;
+    peaks = out; if (!mediaDur) mediaDur = ab.duration; else mediaDur = ab.duration || mediaDur;
+  } catch (e) { peaks = null; }   // can't decode → plain progress bar
+  drawScrub();
+}
+audio.addEventListener("error", () => {
+  if (!audio.src) return;
+  $("playerBar").classList.add("hidden"); $("noAudio").classList.remove("hidden");
+});
+function seekTo(t, play) {
+  const d = duration(); if (d) t = Math.min(Math.max(0, t), d);
+  try { audio.currentTime = t; } catch (_) {}
+  drawScrub(); updateActive(t);
+  if (play) audio.play().catch(() => {});
+}
+function seekFromEvent(e) {
+  const r = scrub.getBoundingClientRect(), d = duration(); if (!d) return;
+  seekTo(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * d, false);
+}
+let dragging = false;
+scrub.addEventListener("pointerdown", e => { dragging = true; scrub.setPointerCapture(e.pointerId); seekFromEvent(e); });
+scrub.addEventListener("pointermove", e => { if (dragging) seekFromEvent(e); });
+scrub.addEventListener("pointerup", () => { dragging = false; });
+scrub.addEventListener("keydown", e => {
+  const d = duration(), m = { ArrowRight: 5, ArrowLeft: -5, ArrowUp: 5, ArrowDown: -5, PageUp: 30, PageDown: -30 }[e.key];
+  if (m) { e.preventDefault(); seekTo(audio.currentTime + m, false); }
+  else if (e.key === "Home") { e.preventDefault(); seekTo(0, false); }
+  else if (e.key === "End" && d) { e.preventDefault(); seekTo(d - 0.05, false); }
+});
+$("play").onclick = () => { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); };
+function tick() { drawScrub(); updateActive(audio.currentTime); rafPlay = audio.paused ? null : requestAnimationFrame(tick); }
+audio.addEventListener("play", () => { $("play").classList.add("playing"); $("play").setAttribute("aria-label", "Pausa"); if (!rafPlay) rafPlay = requestAnimationFrame(tick); });
+audio.addEventListener("pause", () => { $("play").classList.remove("playing"); $("play").setAttribute("aria-label", "Spela upp"); drawScrub(); });
+audio.addEventListener("ended", () => { $("play").classList.remove("playing"); drawScrub(); });
+audio.addEventListener("loadedmetadata", drawScrub);
+audio.addEventListener("timeupdate", () => { if (audio.paused) { drawScrub(); updateActive(audio.currentTime); } });
+
+function updateActive(t) {
+  let idx = -1;
+  for (let i = 0; i < segData.length; i++) if (t >= segData[i].start && t < segData[i].end) { idx = i; break; }
+  if (idx === -1 && segData.length && t >= segData[segData.length - 1].start) idx = segData.length - 1;
+  if (idx !== activeIdx) setActive(idx, !audio.paused);
+}
+function setActive(idx, autoScroll) {
+  activeIdx = idx;
+  document.querySelectorAll("#segs .seg-row.active").forEach(r => r.classList.remove("active"));
+  const row = idx >= 0 ? document.querySelector(`#segs .seg-row[data-i="${idx}"]`) : null;
+  if (!row) return;
+  row.classList.add("active");
+  if (autoScroll) {
+    const r = row.getBoundingClientRect(), top = $("playerBar").getBoundingClientRect().bottom;
+    if (r.top < Math.max(0, top) || r.bottom > window.innerHeight)
+      row.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  }
+}
+
+// ------------------------------------------------------------ live waveform
+let hist = [], lastPush = 0;
+const wave = $("wave");
+function drawWave() {
+  if (!wave.clientWidth) return;
+  const { c, w, h } = setupCanvas(wave), bw = 3, gap = 2, N = Math.floor((w + gap) / (bw + gap));
+  const on = css("--wave"), off = css("--wave-dim");
+  const startX = w - hist.length * (bw + gap) + gap;
+  c.fillStyle = off;
+  for (let i = 0; i < N; i++) {   // dots for the unfilled (left) part
+    const x = i * (bw + gap); if (x + bw > startX - 0.5 && hist.length) break;
+    rr(c, x, (h - 3) / 2, 3, 3, 1.5);
+  }
+  c.fillStyle = on;
+  hist.forEach((v, i) => { const bh = Math.max(3, v * h * 0.95); rr(c, startX + i * (bw + gap), (h - bh) / 2, bw, bh, 1.5); });
+}
+function waveCapacity() { return Math.max(1, Math.floor((wave.clientWidth + 2) / 5)); }
+
+// ------------------------------------------------------------ microphone recording
+let rec = null, recStream = null, recChunks = [], recStart = 0, recTick = null, audioCtx = null, rafId = null;
+const recSupported = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof MediaRecorder !== "undefined");
+function recError(lead, rest) {
+  const el = $("recErr");
+  if (!lead) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  el.innerHTML = `<b>${esc(lead)}</b><span>${esc(rest || "")}</span>`; el.classList.remove("hidden");
+}
+function pickMime() {
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"])
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  return "";
+}
+function extFor(mime) {
+  mime = (mime || "").toLowerCase();
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("mp4") || mime.includes("aac") || mime.includes("m4a")) return "m4a";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("wav")) return "wav";
+  return "webm";
+}
+function stamp() {
+  const d = new Date();
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+function stopMeter() {
+  if (rafId) cancelAnimationFrame(rafId); rafId = null;
+  if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+  $("level").style.width = "0";
+}
+function startMeter(stream) {
+  hist = []; lastPush = 0;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { $("meter").classList.remove("hidden"); $("wave").classList.add("hidden"); return; }
+  try {
+    audioCtx = new AC(); if (audioCtx.resume) audioCtx.resume().catch(() => {});
+    const an = audioCtx.createAnalyser(); an.fftSize = 1024;
+    audioCtx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const loop = now => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      const rms = Math.sqrt(sum / buf.length);
+      $("level").style.width = Math.min(100, Math.round(rms * 300)) + "%";
+      if (!lastPush || now - lastPush >= 50) {
+        lastPush = now; hist.push(Math.min(1, rms * 4));
+        const N = waveCapacity(); if (hist.length > N) hist.splice(0, hist.length - N);
+        drawWave();
+      }
+      rafId = requestAnimationFrame(loop);
+    };
+    rafId = requestAnimationFrame(loop);
+  } catch (e) { $("meter").classList.remove("hidden"); }
+}
+function releaseMic() {
+  if (recStream) recStream.getTracks().forEach(t => t.stop());
+  recStream = null; clearInterval(recTick); stopMeter();
+}
+async function startRecording() {
+  recError("");
+  if (!window.isSecureContext) return recError("Mikrofonen kräver en säker anslutning.", "Öppna sidan via http://127.0.0.1 eller localhost – eller ladda upp en fil i stället.");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined")
+    return recError("Inspelning stöds inte i den här webbläsaren.", "getUserMedia/MediaRecorder saknas. Prova en aktuell Chrome, Firefox, Edge eller Safari – eller ladda upp en fil.");
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    const n = e && e.name;
+    if (n === "NotAllowedError" || n === "SecurityError") recError("Mikrofonen nekades.", "Tillåt mikrofonen för den här sidan i webbläsarens inställningar och försök igen – eller ladda upp en fil i stället.");
+    else if (n === "NotFoundError" || n === "OverconstrainedError") recError("Ingen mikrofon hittades.", "Anslut en mikrofon och försök igen.");
+    else if (n === "NotReadableError" || n === "AbortError") recError("Mikrofonen kunde inte startas.", "Den kan vara upptagen av ett annat program.");
+    else if (n === "NotSupportedError" || n === "TypeError") recError("Mikrofoninspelning stöds inte här.", "Webbläsaren eller sidans inställningar blockerar den. Kontrollera mikrofonbehörigheten eller ladda upp en fil.");
+    else recError("Kunde inte starta mikrofonen.", (e && e.message) || String(e));
+    return;
+  }
+  const mime = pickMime();
+  try { rec = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream); }
+  catch (e) { releaseMic(); return recError("Inspelning stöds inte i den här webbläsaren.", e.message); }
+  recChunks = [];
+  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onerror = e => { releaseMic(); setRecState("idle"); recError("Inspelningsfel.", (e.error && e.error.message) || "okänt fel"); };
+  rec.onstop = () => {
+    releaseMic();
+    const type = rec.mimeType || mime || (recChunks[0] && recChunks[0].type) || "audio/webm";
+    const blob = new Blob(recChunks, { type });
+    if (!blob.size) { setRecState("idle"); return recError("Inspelningen blev tom.", "Inget ljud fångades – kontrollera mikrofonen."); }
+    const name = `inspelning-${stamp()}.${extFor(type)}`;
+    startJob(blob, name);
+  };
+  rec.start(1000);
+  recStart = Date.now(); $("recTime").textContent = "00:00";
+  recTick = setInterval(() => { $("recTime").textContent = fmtShort((Date.now() - recStart) / 1000); }, 250);
+  setRecState("recording");
+  startMeter(recStream);
+}
+$("rec").onclick = () => { if (rec && rec.state === "recording") rec.stop(); else if (!busy) startRecording(); };
+document.addEventListener("keydown", e => {   // Space toggles recording when focus isn't in a control
+  if (e.code !== "Space" || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest("input,textarea,select,button,a,[role=button],[role=slider],summary,[contenteditable]")) return;
+  if ($("rec").disabled) return;
+  e.preventDefault(); $("rec").click();
+});
+
+// ------------------------------------------------------------ init
+if (!recSupported) {
+  $("rec").disabled = true;
+  if (!window.isSecureContext) recError("Mikrofonen kräver en säker anslutning.", "Öppna sidan via http://127.0.0.1 eller localhost – eller ladda upp en fil i stället.");
+  else recError("Inspelning stöds inte i den här webbläsaren.", "getUserMedia/MediaRecorder saknas. Prova en aktuell Chrome, Firefox, Edge eller Safari – eller ladda upp en fil.");
+}
+let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { drawWave(); drawScrub(); }, 60); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawWave(); drawScrub(); });
+drawWave();
+loadInfo();
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+Prata
+Copyright (c) 2026 Kevin Malmgren – MIT License (see LICENSE)
+
+Prata is an independent project. It is not affiliated with or endorsed by
+the National Library of Sweden (KBLab), Hugging Face or OpenAI.
+
+Third-party components and models
+---------------------------------
+
+KB-Whisper models (KBLab, National Library of Sweden / Kungliga biblioteket)
+  https://huggingface.co/KBLab/kb-whisper-large (and -tiny, -base, -small, -medium)
+  License: Apache License 2.0 (as stated on the Hugging Face model cards)
+  The model weights are NOT included in this repository or in the release
+  archives. They are downloaded by the user from Hugging Face on first use.
+  Fine-tuned from OpenAI's Whisper checkpoints (openai/whisper-*, Apache-2.0).
+  Citation: Vesterbacka, L., Rekathati, F., Kurtz, R., Sikora, J., Toftgård, A.
+  (2025) Swedish Whispers; Leveraging a Massive Speech Corpus for Swedish Speech
+  Recognition. Proc. Interspeech 2025, 758-762, doi:10.21437/Interspeech.2025-2646
+
+Hugging Face Candle (candle-core, candle-nn, candle-transformers)
+  https://github.com/huggingface/candle
+  License: Apache License 2.0 OR MIT
+  crates/prata/src/main.rs is derived from candle's whisper example
+  (candle-examples/examples/whisper), and crates/prata/src/melfilters*.bytes
+  are the mel filter banks shipped with that example.
+
+OpenAI Whisper (model architecture, decoding rules, mel filters)
+  https://github.com/openai/whisper
+  License: MIT (code); the openai/whisper-* model weights on Hugging Face are Apache-2.0
+
+Other Rust crates (axum, tokio, serde, clap, hf-hub, tokenizers, …) are used
+under their respective licenses (mostly MIT and/or Apache-2.0); see Cargo.lock.
+
+The optional Python fallback (python/transcribe.py) uses PyTorch (BSD-3-Clause)
+and Hugging Face Transformers (Apache-2.0), which are installed separately.
+
+ffmpeg is required at runtime and is NOT bundled; it is installed separately by
+the user (LGPL/GPL depending on the build).

@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Tag must match Cargo.toml and npm/package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo_v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          npm_v=$(node -p "require('./npm/package.json').version")
+          echo "tag=$tag cargo=$cargo_v npm=$npm_v"
+          if [ "$tag" != "$cargo_v" ] || [ "$tag" != "$npm_v" ]; then
+            echo "::error::version mismatch (tag $tag, Cargo.toml $cargo_v, npm/package.json $npm_v)"; exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64          # primary target (Apple Silicon, Metal GPU)
+            os: macos-14
+            triple: aarch64-apple-darwin
+            features: metal
+          - name: linux-x64             # CPU; built on 22.04 for an older glibc baseline
+            os: ubuntu-22.04
+            triple: x86_64-unknown-linux-gnu
+            features: ""
+          - name: darwin-x64            # optional: Intel Macs, CPU only, cross-compiled on Apple Silicon
+            os: macos-14
+            triple: x86_64-apple-darwin
+            features: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.triple }}
+      - name: Test (before the release build so features are not mixed)
+        if: matrix.triple != 'x86_64-apple-darwin'
+        run: cargo test --release --locked --target ${{ matrix.triple }} -p prata-web -p prata
+      - name: Build prata (CLI)
+        run: cargo build --release --locked --target ${{ matrix.triple }} -p prata ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
+      - name: Build prata-web
+        run: cargo build --release --locked --target ${{ matrix.triple }} -p prata-web
+      - name: Smoke test binaries
+        if: matrix.triple != 'x86_64-apple-darwin'
+        run: |
+          target/${{ matrix.triple }}/release/prata --help
+          test -x target/${{ matrix.triple }}/release/prata-web
+      - name: Package
+        run: scripts/package.sh ${{ matrix.name }} ${{ needs.check-version.outputs.version }} target/${{ matrix.triple }}/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prata-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: prata-*
+          merge-multiple: true
+      - run: ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Prata v${{ needs.check-version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  npm-publish:
+    # Runs only if the NPM_TOKEN repository secret is set.
+    needs: [check-version, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write            # npm provenance
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.NPM_TOKEN != ''
+      - uses: actions/setup-node@v4
+        if: env.NPM_TOKEN != ''
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Publish prata-app
+        if: env.NPM_TOKEN != ''
+        working-directory: npm
+        run: |
+          cp ../LICENSE .
+          npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Skipped
+        if: env.NPM_TOKEN == ''
+        run: echo "NPM_TOKEN secret not set – skipping npm publish."

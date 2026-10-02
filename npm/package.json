@@ -1,0 +1,15 @@
+{
+  "name": "prata-app",
+  "version": "0.1.0",
+  "description": "Prata – local Swedish speech-to-text in your browser. Downloads the prebuilt Prata binaries and starts the web UI.",
+  "keywords": ["speech-to-text", "swedish", "svenska", "whisper", "transcription", "local", "offline"],
+  "license": "MIT",
+  "author": "Kevin Malmgren",
+  "homepage": "https://github.com/Malmen877/prata#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/Malmen877/prata.git", "directory": "npm" },
+  "bugs": { "url": "https://github.com/Malmen877/prata/issues" },
+  "bin": { "prata-app": "bin/prata.js" },
+  "files": ["bin/", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "os": ["darwin", "linux"]
+}
