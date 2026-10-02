@@ -147,7 +147,6 @@ async function ensureBinaries() {
 
   const asset = `prata-v${VERSION}-${t}.tar.gz`;
   const base = `https://github.com/${OWNER}/${REPO}/releases/download/v${VERSION}/`;
-  if (OWNER === DEFAULT_OWNER) log("warning: GitHub owner is still the placeholder – set PRATA_GITHUB_OWNER");
   log(`first run: downloading ${asset} …`);
   const tmpFile = path.join(cacheRoot, `${asset}.part-${process.pid}`);
   try {
