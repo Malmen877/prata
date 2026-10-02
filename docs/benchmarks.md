@@ -18,8 +18,8 @@ for those places.
 
 | Model | Time (x86 CPU) | Peak memory (x86 CPU) | WER | WER (corrected ref) | Mac mini M4 | Notes |
 |---|---:|---:|---:|---:|---|---|
-| **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | 23.9 s wall time (21.7 s transcription), 2.2 GB² | fastest, about 19× faster than Standard here; recommended for long recordings |
-| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | 133.7 s, 4.9 GB peak footprint (Metal) | **default** |
+| **Snabb** (Klang Pianissimo, ONNX int8) | 40 s | 2.1 GB | 5.3 % | 3.0 % | 23.8 s wall time (21.5 s transcription), 2.2 GB² | fastest, about 19× faster than Standard here; recommended for long recordings |
+| **Standard** (KB-Whisper small) | 576 s | 1.9 GB | 4.3 % | 2.1 % | 133.1 s, 4.9 GB peak footprint (Metal) | **default** |
 | **Large** (KB-Whisper large) | not timed (about 30 min on this CPU) | 9.5 GB¹ | 4.6 % | 2.4 % | not measured (clip: 119.5 s, 11.7 GB peak footprint, Metal) | largest, slowest; needs a 16 GB+ Mac |
 
 ¹ Large's peak memory was measured on the 2.5-minute clip with the CPU build (f32). It is much lower on Metal. Large's
@@ -28,7 +28,10 @@ memory were not re-measured for 0.6.1, hence "not measured" in the Mac column. W
 build and on Metal, so the WER figures hold for both machines.
 
 ² Snabb on the Mac mini M4: the 2.5-minute clip takes 4.2 s with a 1.8 GB peak. The first run, on clip15 (15 s) and
-including the download of the model, took 28.5 s. The model takes about 660 MB (630 MiB) in the Hugging Face cache.
+including the download of the model, took 30.5 s. The model takes about 660 MB (630 MiB) in the Hugging Face cache. Snabb's output on the Mac is
+deterministic (20 stress runs byte-identical, including parallel runs under CPU load) but not byte-identical to
+the x86 output; on the Mac its long12 WER is 5.0 % (2.8 % against the corrected reference). Mac figures are from
+the 0.6.1 release build (f4cb5c6).
 
 **WER per recording** (original reference, corrected reference in brackets; time on x86 CPU)
 

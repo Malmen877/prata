@@ -21,8 +21,8 @@ Needs macOS (Apple Silicon; Intel works without Snabb) or Linux x64 with glibc 2
 
 | In the UI | Model | Mac mini M4, 12.5 min recording | WER |
 |---|---|---|---:|
-| **Snabb** | Klang Pianissimo, ONNX int8 (CPU) | 23.9 s | 5.3 % |
-| **Standard** (default) | KB-Whisper small (Metal) | 133.7 s | 4.3 % |
+| **Snabb** | Klang Pianissimo, ONNX int8 (CPU) | 23.8 s | 5.3 % |
+| **Standard** (default) | KB-Whisper small (Metal) | 133.1 s | 4.3 % |
 | **Large** | KB-Whisper large (Metal) | not measured (2.5 min clip: 119.5 s) | 4.6 % |
 
 The WER is against the original reference text. Large's 12.5 min WER is from a Prata 0.5.0 run on the same Mac
