@@ -457,6 +457,7 @@ pub async fn direct_download(
     if !is_media || ct.contains("mpegurl") || ct.contains("dash+xml") {
         return Ok(Direct::NotMedia { status: None, html: ct.contains("html") || ct.contains("mpegurl") || ct.contains("dash+xml") });
     }
+    let resp_cd = resp.headers().get(reqwest::header::CONTENT_DISPOSITION).map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned());
     let total = resp.content_length();
     if let Some(t) = total {
         if t > limits.max_bytes {
@@ -485,8 +486,64 @@ pub async fn direct_download(
     if done == 0 {
         return Err(FetchError::Other("filen var tom".into()));
     }
-    let filename = if last_seg.is_empty() { format!("{}.{ext}", cur.host_str().unwrap_or("länk")) } else { last_seg };
-    Ok(Direct::Media(Downloaded { path, title: None, filename, via: "http" }))
+    let cd_name = resp_cd.as_deref().and_then(disposition_filename);
+    let title = file_title(cd_name.as_deref().unwrap_or(&last_seg)).or_else(|| file_title(&last_seg));
+    let filename = match cd_name.as_deref().map(basename).filter(|n| !n.is_empty()) {
+        Some(n) => n.to_string(),
+        None if last_seg.is_empty() => format!("{}.{ext}", cur.host_str().unwrap_or("länk")),
+        None => last_seg,
+    };
+    Ok(Direct::Media(Downloaded { path, title, filename, via: "http" }))
+}
+
+/// `filename*=UTF-8''…` (preferred) or `filename="…"` from a Content-Disposition header.
+fn disposition_filename(cd: &str) -> Option<String> {
+    let mut plain = None;
+    for part in cd.split(';').map(str::trim) {
+        let Some((k, v)) = part.split_once('=') else { continue };
+        let k = k.trim().to_ascii_lowercase();
+        let v = v.trim();
+        if k == "filename*" {
+            // RFC 5987: charset'lang'percent-encoded
+            let enc = v.splitn(3, '\'').nth(2).unwrap_or(v);
+            let d = percent_decode(enc.trim_matches('"'));
+            if !d.trim().is_empty() {
+                return Some(d);
+            }
+        } else if k == "filename" {
+            let v = v.strip_prefix('"').and_then(|x| x.strip_suffix('"')).unwrap_or(v).replace("\\\"", "\"");
+            if !v.trim().is_empty() {
+                plain = Some(if v.contains('%') { percent_decode(&v) } else { v });
+            }
+        }
+    }
+    plain
+}
+
+fn basename(name: &str) -> &str {
+    name.rsplit(['/', '\\']).next().unwrap_or("").trim()
+}
+
+/// Note title from a downloaded file's name: no directory, no extension, `_` as spaces,
+/// control characters removed. `None` for empty or meaningless names (download, 1234, uuids …).
+pub fn file_title(name: &str) -> Option<String> {
+    let base = basename(name);
+    let stem = match base.rfind('.') {
+        Some(i) if base.len() - i <= 6 && base[i + 1..].chars().all(|c| c.is_ascii_alphanumeric()) => &base[..i],
+        _ => base,
+    };
+    let t = crate::notes::clean_title(&stem.replace('_', " "))?;
+    let t = t.trim_matches(|c: char| c == '-' || c == '.' || c.is_whitespace()).to_string();
+    let lower = t.to_lowercase();
+    const GENERIC: [&str; 16] = [
+        "download", "file", "audio", "video", "media", "index", "stream", "play", "listen", "playback", "master",
+        "default", "untitled", "track", "attachment", "fil",
+    ];
+    let hexish = t.len() >= 16 && t.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    if t.is_empty() || GENERIC.contains(&lower.as_str()) || t.chars().all(|c| c.is_ascii_digit() || c == '-' || c == ' ') || hexish {
+        return None;
+    }
+    Some(t)
 }
 
 fn percent_decode(s: &str) -> String {
@@ -821,6 +878,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn titles_from_file_names() {
+        assert_eq!(file_title("Avsnitt_12_R%C3%B6deby.mp3".replace("%C3%B6", "ö").as_str()).as_deref(), Some("Avsnitt 12 Rödeby"));
+        assert_eq!(file_title("intervju med Ada.m4a").as_deref(), Some("intervju med Ada"));
+        assert_eq!(file_title("../../etc/podd.v2.mp4").as_deref(), Some("podd.v2"));
+        assert_eq!(file_title("C:\\x\\möte.wav").as_deref(), Some("möte"));
+        assert_eq!(file_title("noext").as_deref(), Some("noext"));
+        assert_eq!(file_title(".mp3"), None);
+        for generic in ["download", "Download.mp3", "audio.m4a", "file", "12345.mp3", "", "  .wav", "3f2a9c1e4b5d6a7f8e9d.mp3", "550e8400-e29b-41d4-a716-446655440000.mp4"] {
+            assert_eq!(file_title(generic), None, "{generic}");
+        }
+        assert_eq!(file_title("a\u{0}b\tc.mp3").as_deref(), Some("a b c"));
+        assert_eq!(file_title(&format!("{}.mp3", "x".repeat(300))).map(|t| t.chars().count()), Some(200));
+        assert_eq!(disposition_filename("attachment; filename=\"Mitt avsnitt.mp3\"").as_deref(), Some("Mitt avsnitt.mp3"));
+        assert_eq!(disposition_filename("attachment; filename=plain.mp3").as_deref(), Some("plain.mp3"));
+        assert_eq!(disposition_filename("attachment; filename=\"fallback.mp3\"; filename*=UTF-8''R%C3%B6deby%20podd.mp3").as_deref(), Some("Rödeby podd.mp3"));
+        assert_eq!(disposition_filename("inline"), None);
+    }
+
+    #[test]
     fn titles_from_ytdlp() {
         assert_eq!(pick_title("Generic\tAvsnitt 12\tAvsnitt 12 (1)").as_deref(), Some("Avsnitt 12"));
         assert_eq!(pick_title("HTML5MediaEmbed\t\tRödeby (podd) (1)").as_deref(), Some("Rödeby (podd)"));
@@ -884,7 +960,13 @@ pub(crate) mod tests {
     pub(crate) async fn mock_server() -> String {
         let wav = wav_bytes(3.0);
         let wav2 = wav.clone();
+        let (wav3, wav4) = (wav.clone(), wav.clone());
         let app = Router::new()
+            .route("/dl", get(move || async move {
+                ([(header::CONTENT_TYPE, "audio/wav".to_string()),
+                  (header::CONTENT_DISPOSITION, "attachment; filename=\"x.wav\"; filename*=UTF-8''Intervju_med_R%C3%B6deby.wav".to_string())], wav3.clone())
+            }))
+            .route("/download.wav", get(move || async move { ([(header::CONTENT_TYPE, "audio/wav")], wav4.clone()) }))
             .route("/clip.wav", get(move || async move { ([(header::CONTENT_TYPE, "audio/wav")], wav.clone()) }))
             .route("/octet/klipp%20ett.wav", get(move || async move { ([(header::CONTENT_TYPE, "application/octet-stream")], wav2.clone()) }))
             .route("/r/{n}", get(|AxPath(n): AxPath<u32>| async move {
@@ -941,13 +1023,22 @@ pub(crate) mod tests {
         let Direct::Media(d) = r else { panic!("not media") };
         assert_eq!(std::fs::read(&d.path).unwrap(), wav_bytes(3.0));
         assert_eq!((d.filename.as_str(), d.via), ("clip.wav", "http"));
+        assert_eq!(d.title.as_deref(), Some("clip"), "title = file name without extension");
         assert!(d.path.starts_with(dir.path()));
         let total = wav_bytes(3.0).len() as u64;
         assert_eq!(seen.last(), Some(&(total, Some(total))), "progress reaches 100 %");
 
         // octet-stream with a media extension, percent-encoded name
         let (r, _d) = get_direct(&format!("{base}/octet/klipp%20ett.wav"), 10, p).await;
-        assert!(matches!(r, Ok(Direct::Media(ref d)) if d.filename == "klipp ett.wav"));
+        assert!(matches!(r, Ok(Direct::Media(ref d)) if d.filename == "klipp ett.wav" && d.title.as_deref() == Some("klipp ett")));
+        // Content-Disposition wins over the URL; generic names fall back to the default title
+        let (r, _d) = get_direct(&format!("{base}/dl"), 10, p).await;
+        assert!(matches!(r, Ok(Direct::Media(ref d)) if d.filename == "Intervju_med_Rödeby.wav" && d.title.as_deref() == Some("Intervju med Rödeby")));
+        let (r, _d) = get_direct(&format!("{base}/download.wav"), 10, p).await;
+        assert!(matches!(r, Ok(Direct::Media(ref d)) if d.title.is_none()));
+        // redirects: the name of the final URL is used
+        let (r, _d) = get_direct(&format!("{base}/r/1"), 10, p).await;
+        assert!(matches!(r, Ok(Direct::Media(ref d)) if d.title.as_deref() == Some("clip")));
         // 5 redirects are fine, 6 are not
         let (r, _d) = get_direct(&format!("{base}/r/4"), 10, p).await;
         assert!(matches!(r, Ok(Direct::Media(_))));

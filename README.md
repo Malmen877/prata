@@ -197,6 +197,8 @@ transcribes it like an upload; the note keeps the downloaded audio, gets the vid
 links back to the source.
 
 - **Direct links** to audio/video files (`.mp3`, `.m4a`, `.mp4`, `.wav`, …) work out of the box.
+  The note is named after the file (from `Content-Disposition` if the server sends one, else the last part of
+  the URL, without extension, `_` as spaces); generic names like `download.mp3` keep the default date title.
 - **Web pages** (YouTube, SVT Play, Vimeo, most podcast pages, …) need [yt-dlp](https://github.com/yt-dlp/yt-dlp):
   `brew install yt-dlp` (keep it updated with `brew upgrade yt-dlp`; sites change often). Prata finds it on `PATH`
   (set `PATH` in the LaunchAgent, see below) or via `PRATA_YTDLP`, and picks it up without a restart.
