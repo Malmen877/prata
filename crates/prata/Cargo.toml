@@ -28,6 +28,10 @@ accelerate-src = { version = "0.3.2", optional = true }
 # binaries ort downloads at build time (aarch64-apple-darwin, x86_64-linux-gnu).
 ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-22"] }
 
+# Snabb on Linux x86_64: seccomp filter that keeps onnxruntime off Intel AMX (see snabb/noamx.rs)
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+libc = { version = "0.2", optional = true }
+
 [features]
 default = []
 # Apple GPU (macOS). Used for the darwin-arm64 release build.
@@ -36,4 +40,4 @@ cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 accelerate = ["dep:accelerate-src", "candle-core/accelerate", "candle-nn/accelerate", "candle-transformers/accelerate"]
 # The Snabb model (Klang Pianissimo via onnxruntime). Without it `--model snabb`
 # reports that this build has no Snabb support; KB-Whisper is unaffected.
-snabb = ["dep:ort"]
+snabb = ["dep:ort", "dep:libc"]

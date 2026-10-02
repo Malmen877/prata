@@ -15,6 +15,8 @@ pub mod tdt;
 pub mod text;
 #[cfg(feature = "snabb")]
 mod engine;
+#[cfg(all(feature = "snabb", target_os = "linux", target_arch = "x86_64"))]
+mod noamx;
 
 use std::path::PathBuf;
 
@@ -112,6 +114,9 @@ mod imp {
     pub fn run(o: Opts) -> Result<()> {
         let rev = o.revision.clone().unwrap_or_else(|| REVISION.to_string());
         eprintln!("[info] model={REPO} (Snabb, Klang Pianissimo int8) revision={} device=cpu (onnxruntime)", &rev[..rev.len().min(12)]);
+        // before onnxruntime initialises MLAS (see noamx.rs)
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        noamx::disable_amx();
         let t_load = Instant::now();
         let client = HFClientSync::new()?;
         let vocab_p = hub_get(&client, &rev, VOCAB_FILE)?;

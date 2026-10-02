@@ -2891,6 +2891,7 @@ dependencies = [
  "clap",
  "flate2",
  "hf-hub",
+ "libc",
  "ort",
  "serde_json",
  "tokenizers 0.23.2",
