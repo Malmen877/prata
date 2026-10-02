@@ -205,6 +205,15 @@ fn prata_args(cfg: &Config, info: &PrataInfo, input: &Path, model: &str, out_jso
     } else if has("--timestamps") {
         v.push("--timestamps".into());
     }
+    // Speed options of the Candle CLI (only passed through when set).
+    for (k, flag) in [("VAD", "--vad"), ("BATCH_SIZE", "--batch-size")] {
+        if let Some(val) = env(k) {
+            if has(flag) {
+                v.push(flag.into());
+                v.push(val.trim().into());
+            }
+        }
+    }
     v
 }
 
