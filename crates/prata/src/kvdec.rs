@@ -13,8 +13,7 @@
 //! The cache is batched (dim 0 = batch row); `select_rows` drops finished rows.
 //!
 //! The audio encoder is ported too (unchanged ops), only so that the model can be
-//! loaded without also materialising candle's decoder weights (that cost ~2 GB of
-//! extra peak memory with the large model).
+//! loaded without also loading candle's decoder weights.
 
 use candle_core::{IndexOp, Module, Result, Tensor, D};
 use candle_nn::{embedding, linear, linear_no_bias, Conv1d, Conv1dConfig, Embedding, LayerNorm, Linear, VarBuilder};
