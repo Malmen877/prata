@@ -19,7 +19,7 @@ What it does:
 5. Ctrl+C stops the server. prata-web's own log lines appear in the same terminal (or in the LaunchAgent's
    `StandardOutPath`/`StandardErrorPath` file); earlier versions wrote them to `~/.prata/prata-web.log`.
 
-The first transcription with a model downloads it from Hugging Face (Snabb ≈ 0.66 GB, Standard/small ≈ 1 GB,
+The first transcription with a model downloads it from Hugging Face (Snabb ≈ 660 MB / 630 MiB, Standard/small ≈ 1 GB,
 Large ≈ 3.1 GB) into `~/.cache/huggingface/`. Nothing else leaves your machine.
 
 The web UI offers **Snabb** (Klang Pianissimo, fastest; macOS Apple Silicon and Linux x64), **Standard**
