@@ -13,6 +13,8 @@ serves a small web UI on `127.0.0.1`.
 - Transcript with segment timestamps, a waveform player, click-to-seek timestamps, search and copy
 - Downloads: `.txt`, `.txt` with timestamps, `.srt` subtitles, `.json`
 - Model choice tiny → large (default **small**), light and dark mode
+- **Notes:** every transcription is saved (text + original audio) and listed by day, with search across all notes, rename and delete
+- Phone-friendly: one big record button, installable to the iPhone Home Screen, reachable from your phone over [Tailscale](#use-it-from-your-iphone-tailscale)
 - Also a command-line tool: `prata interview.m4a --timestamps`
 
 ## Quick start
@@ -50,7 +52,8 @@ For accuracy figures (WER) of each size see the [KB-Whisper model card](https://
 ## Privacy
 
 Everything runs locally. Audio is uploaded only to the Prata server on your own machine (`127.0.0.1`),
-converted with your local ffmpeg, transcribed, and the temporary files are deleted afterwards.
+converted with your local ffmpeg and transcribed. The transcript and the original audio are saved as a note in
+`~/.prata/notes/` (see [Notes](#notes)); the temporary converted files are deleted.
 The only network access is downloading the model weights from Hugging Face on first use
 (and the one-time binary download when you use `npx prata-app`). There is no telemetry.
 
@@ -86,10 +89,12 @@ PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.1.0-darwin-arm64.tar.gz node npm/bin/prata.
 
 ```
 crates/prata/       CLI (Candle whisper decoder, forced Swedish, 30 s windows, SRT output)
-crates/prata-web/   axum web server + single-file UI (src/index.html, embedded in the binary)
+crates/prata-web/   axum web server + single-file UI (src/index.html) and PWA icons (src/assets/), embedded in the binary
+                    notes storage in src/notes.rs
 python/             optional Python fallback backend (transformers), requirements.txt
 npm/                `prata-app` launcher (pure Node, no dependencies)
 scripts/package.sh  builds the release tar.gz
+scripts/test-ui.mjs unit test for the UI's day grouping: `TZ=Europe/Stockholm node scripts/test-ui.mjs`
 .github/workflows/  CI and tag-triggered release (GitHub Release assets + optional npm publish)
 ```
 
@@ -118,12 +123,17 @@ Without `--timestamps` it prints plain text; with it, SRT. `--cpu` forces CPU on
 
 ## Web server configuration
 
-All settings are environment variables. `PRATA_*` is the primary name; the older `KBW_*` names still work.
+```
+prata-web [--host ADDR] [--port PORT] [--notes-dir DIR]
+```
+
+Flags override the environment variables below. `PRATA_*` is the primary name; the older `KBW_*` names still work.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PRATA_WEB_PORT` | `8795` | listen port |
-| `PRATA_WEB_HOST` | `127.0.0.1` | listen address (keep it local – there is no authentication) |
+| `PRATA_WEB_HOST` / `PRATA_HOST` | `127.0.0.1` | listen address (`--host`). Keep it local – there is no authentication; prata-web prints a warning for any non-loopback address |
+| `PRATA_NOTES_DIR` | `~/.prata/notes` | where notes are saved (`--notes-dir`) |
 | `PRATA_MODEL` | `small` | default model in the UI |
 | `PRATA_BACKEND` | `auto` | `auto` (prata, falling back to Python), `prata`, or `python` |
 | `PRATA_BIN` | next to `prata-web`, then `$PATH` | path to the `prata` CLI |
@@ -135,8 +145,95 @@ All settings are environment variables. `PRATA_*` is the primary name; the older
 | `PRATA_VAD` | unset (CLI default `on`) | passed as `--vad` (`on`/`off`) |
 | `PRATA_BATCH_SIZE` | unset (CLI default auto) | passed as `--batch-size` |
 
-HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `GET /api/jobs/{id}` (status, segments);
+HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `GET /api/jobs/{id}` (status, segments, `note_id` when done);
 `GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info`.
+
+Notes API: `GET /api/notes?q=` (newest first, `{notes, total}`; every search word must occur in the title or transcript),
+`GET /api/notes/{id}`, `PATCH /api/notes/{id}` with `{"title": "…"}`, `DELETE /api/notes/{id}` (removes the audio too),
+`GET /api/notes/{id}/audio` (original audio, supports `Range` for seeking), `GET /api/notes/{id}/{txt|txt-ts|srt|json}`.
+
+### Notes
+
+Every finished transcription is stored as a folder per note:
+
+```
+~/.prata/notes/<id>/note.json     title, created (unix time), model, audio duration, segments with timestamps
+~/.prata/notes/<id>/audio.<ext>   the original upload or recording (m4a from iPhone, webm from Chrome, …)
+```
+
+The default title is the local date and time plus the first words of the transcript; rename it in the UI.
+Writes are atomic (temporary file + fsync + rename), so a crash never leaves a half-written note, and the folder is
+plain files: back it up with Time Machine, copy it to another Mac, or delete a folder to remove a note.
+The list is grouped by day (Idag, Igår, 28 september, …) using the browser's local time.
+
+## Use it from your iPhone (Tailscale)
+
+Run Prata on an always-on Mac (e.g. a Mac mini) and reach it from your iPhone over [Tailscale](https://tailscale.com).
+`tailscale serve` gives you a real HTTPS address, which iOS Safari needs for the microphone, while prata-web keeps
+listening on `127.0.0.1` only.
+
+1. Install Tailscale on the Mac (`brew install --cask tailscale` or the App Store app) and on the iPhone (App Store),
+   and sign in to the **same tailnet** on both.
+2. In the [admin console](https://login.tailscale.com/admin/dns) enable **MagicDNS** and **HTTPS Certificates**.
+3. Start Prata on the Mac (see the LaunchAgent below to keep it running), then publish it inside your tailnet:
+
+   ```bash
+   tailscale serve --bg 8795        # https://<machine>.<tailnet>.ts.net  ->  http://127.0.0.1:8795
+   tailscale serve status           # shows the URL;  `tailscale serve reset` turns it off
+   ```
+
+   (With the Mac App Store app the CLI is `/Applications/Tailscale.app/Contents/MacOS/Tailscale`.)
+4. On the iPhone open `https://<machine>.<tailnet>.ts.net` in Safari, allow the microphone, then
+   **Share → Add to Home Screen**. It opens full screen like an app (name *Prata*).
+
+Use `tailscale serve`, not `tailscale funnel`: funnel publishes to the whole internet.
+
+**Security:** prata-web has no login. Anyone who can reach it can record, read, download and delete notes.
+With `tailscale serve` that means every device and user in your tailnet (restrict it with Tailscale ACLs if you share
+the tailnet). Binding to another address with `--host 0.0.0.0` exposes it to your whole LAN as well, and the
+microphone will not work there without HTTPS – prefer the default `127.0.0.1` plus `tailscale serve`.
+
+### Keep it running on macOS (LaunchAgent)
+
+Save as `~/Library/LaunchAgents/se.prata.web.plist` (adjust the paths to where you built or installed Prata;
+replace `kevin` with your user name):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>se.prata.web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/kevin/prata/target/release/prata-web</string>
+    <string>--port</string><string>8795</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- ffmpeg from Homebrew lives in /opt/homebrew/bin; launchd's default PATH does not include it -->
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PRATA_MODEL</key><string>small</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/kevin</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/kevin/Library/Logs/prata-web.log</string>
+  <key>StandardErrorPath</key><string>/Users/kevin/Library/Logs/prata-web.log</string>
+</dict>
+</plist>
+```
+
+```bash
+plutil -lint ~/Library/LaunchAgents/se.prata.web.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/se.prata.web.plist     # start now and at every login
+launchctl kickstart -k gui/$(id -u)/se.prata.web                              # restart (e.g. after rebuilding)
+launchctl bootout gui/$(id -u)/se.prata.web                                   # stop and unload
+tail -f ~/Library/Logs/prata-web.log
+```
+
+A LaunchAgent runs while your user is logged in; for a headless Mac mini enable automatic login
+(System Settings → Users & Groups) and disable sleep (System Settings → Energy → "Prevent automatic sleeping").
 
 ### Python fallback (optional)
 
@@ -151,10 +248,10 @@ python3 python/transcribe.py recording.m4a --model small --timestamps
 
 ## Limitations
 
-- Jobs run one at a time and live in memory only (lost when the server stops).
+- Jobs run one at a time. A job that is still running when the server stops is lost; finished ones are saved as notes.
 - Long recordings are kept in browser memory until you press stop.
 - A word can occasionally be dropped or repeated at a 30-second window boundary.
-- The microphone needs a secure context: use `http://127.0.0.1` or `localhost`, not a LAN IP.
+- The microphone needs a secure context: use `http://127.0.0.1`/`localhost` on the Mac, or HTTPS (e.g. `tailscale serve`) from other devices – not a plain LAN IP.
 
 ## Credits and licenses
 
