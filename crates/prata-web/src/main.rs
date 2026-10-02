@@ -8,6 +8,7 @@
 //! Every finished job is saved as a note (see `notes.rs`): /api/notes…
 
 mod fetch;
+mod hint;
 mod klang;
 mod notes;
 
@@ -1014,6 +1015,19 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
     }))
 }
 
+#[derive(Deserialize)]
+struct HintQuery {
+    duration_s: f64,
+    model: Option<String>,
+}
+
+/// GET /api/model-hint?duration_s=1800&model=small -> {"suggest": "snabb"|null, "reason": "..."}
+async fn model_hint(State(st): State<St>, Query(q): Query<HintQuery>) -> Json<hint::Hint> {
+    let avail = snabb_available(&*st.prata.lock().await);
+    let cur = q.model.unwrap_or_else(|| st.cfg.default_model.clone());
+    Json(hint::hint(q.duration_s, &cur, avail))
+}
+
 async fn create_job(State(st): State<St>, mut mp: Multipart) -> Response {
     let mut file: Option<(String, Vec<u8>)> = None;
     let mut model = st.cfg.default_model.clone();
@@ -1498,6 +1512,7 @@ fn app(st: St) -> Router {
         .route("/icon-512.png", get(icon_512))
         .route("/icon-maskable-512.png", get(icon_maskable))
         .route("/api/info", get(info))
+        .route("/api/model-hint", get(model_hint))
         .route("/api/health", get(health))
         .route("/api/jobs", post(create_job))
         .route("/api/jobs/url", post(create_url_job))
@@ -1832,6 +1847,11 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
         assert_eq!(snabb["available"], true, "{info}");
         assert_eq!(snabb["label"], "Snabb");
         assert_eq!(info["default_model"], "small");
+        let (_, _, b) = call(&app, "GET", "/api/model-hint?duration_s=2400&model=small", None, None).await;
+        let h: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(h["suggest"], "snabb", "{h}");
+        let (_, _, b) = call(&app, "GET", "/api/model-hint?duration_s=120", None, None).await;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["suggest"], serde_json::Value::Null);
         let id = upload(&app, "snabb").await;
         let j = wait_job(&app, &id).await;
         assert_eq!(j["status"], "done", "{j}");

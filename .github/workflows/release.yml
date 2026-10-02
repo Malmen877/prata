@@ -32,18 +32,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # snabb = Klang Pianissimo via onnxruntime, linked statically from ort's
+          # prebuilt binaries (available for aarch64-apple-darwin and x86_64-linux-gnu only)
           - name: darwin-arm64          # primary target (Apple Silicon, Metal GPU)
             os: macos-14
             triple: aarch64-apple-darwin
-            features: metal
+            features: metal,snabb
+            test_features: snabb
           - name: linux-x64             # CPU; built on 22.04 for an older glibc baseline
             os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
-            features: ""
-          - name: darwin-x64            # optional: Intel Macs, CPU only, cross-compiled on Apple Silicon
+            features: snabb
+            test_features: snabb
+          - name: darwin-x64            # optional: Intel Macs, CPU only, cross-compiled on Apple Silicon; no Snabb
             os: macos-14
             triple: x86_64-apple-darwin
             features: ""
+            test_features: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +60,7 @@ jobs:
           key: ${{ matrix.triple }}
       - name: Test (before the release build so features are not mixed)
         if: matrix.triple != 'x86_64-apple-darwin'
-        run: cargo test --release --locked --target ${{ matrix.triple }} -p prata-web -p prata
+        run: cargo test --release --locked --target ${{ matrix.triple }} -p prata-web -p prata ${{ matrix.test_features && format('--features prata/{0}', matrix.test_features) || '' }}
       - name: Build prata (CLI)
         run: cargo build --release --locked --target ${{ matrix.triple }} -p prata ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
       - name: Build prata-web

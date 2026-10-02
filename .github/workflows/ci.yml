@@ -16,18 +16,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            features: ""
+            features: snabb
           - os: macos-14
-            features: metal
+            features: metal,snabb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Build without Snabb (as for darwin-x64) and check that it says so
+        run: |
+          cargo build --release --locked -p prata
+          target/release/prata --help | grep -q "Snabb (Klang Pianissimo): not available in this build"
+          ! target/release/prata /dev/null --model snabb 2>err.txt
+          grep -q "finns inte i den här versionen av prata" err.txt
       - name: Build
         run: |
           cargo build --release --locked -p prata ${{ matrix.features && format('--features {0}', matrix.features) || '' }}
           cargo build --release --locked -p prata-web
+          target/release/prata --help | grep -q "available in this build (--model snabb)"
       - name: Test tools (ffmpeg, yt-dlp) for the link tests
         if: runner.os == 'Linux'
         run: |
@@ -35,7 +42,7 @@ jobs:
           python3 -m pip install --user --break-system-packages yt-dlp || python3 -m pip install --user yt-dlp
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Test
-        run: cargo test --release --locked --workspace
+        run: cargo test --release --locked --workspace --features prata/snabb
       - name: Release build must not contain the test-only loopback switch
         run: "! grep -q PRATA_INSECURE_ALLOW_LOOPBACK target/release/prata-web"
       - name: Package (dry run)
