@@ -34,7 +34,7 @@ pub struct Segment {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
     pub title: String,
@@ -56,7 +56,30 @@ pub struct Note {
     /// don't have it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
+    /// Where the note came from when it wasn't transcribed here: "klang"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Markdown summary (Klang imports)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Klang conversation this note was imported from (dedupe key) and its `updated_at`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub klang: Option<KlangRef>,
+    /// The user renamed the note; imports must not overwrite the title
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub title_edited: bool,
 }
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KlangRef {
+    pub id: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// File in the notes directory listing Klang conversations deleted here, so a re-sync
+/// doesn't bring them back.
+pub const KLANG_TOMBSTONES: &str = ".klang-deleted.json";
 
 impl Note {
     pub fn text(&self) -> String {
@@ -78,6 +101,8 @@ pub struct Summary {
     pub audio_bytes: u64,
     /// Start of the transcript, or the text around the first search hit
     pub snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 pub fn valid_id(id: &str) -> bool {
@@ -190,6 +215,8 @@ fn snippet_at(text: &str, byte_pos: usize, len: usize) -> String {
 pub struct Store {
     dir: PathBuf,
     notes: Mutex<HashMap<String, Note>>,
+    /// Klang conversation ids deleted locally (see KLANG_TOMBSTONES)
+    klang_deleted: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl Store {
@@ -216,7 +243,14 @@ impl Store {
                 Err(e) => eprintln!("[notes] {}: unreadable note.json ({e}), skipped", p.display()),
             }
         }
-        Ok(Self { dir, notes: Mutex::new(notes) })
+        let klang_deleted = match fs::read(dir.join(KLANG_TOMBSTONES)) {
+            Ok(b) => serde_json::from_slice::<Vec<String>>(&b).unwrap_or_else(|e| {
+                eprintln!("[notes] {KLANG_TOMBSTONES} unreadable ({e}), ignored");
+                vec![]
+            }),
+            Err(_) => vec![],
+        };
+        Ok(Self { dir, notes: Mutex::new(notes), klang_deleted: Mutex::new(klang_deleted.into_iter().collect()) })
     }
 
     pub fn dir(&self) -> &Path {
@@ -240,7 +274,7 @@ impl Store {
                 if terms.is_empty() {
                     snippet = text.chars().take(160).collect::<String>() + if text.chars().count() > 160 { "…" } else { "" };
                 } else {
-                    let hay = format!("{}\n{}", n.title, text).to_lowercase();
+                    let hay = format!("{}\n{}\n{}", n.title, text, n.summary.as_deref().unwrap_or("")).to_lowercase();
                     if !terms.iter().all(|t| hay.contains(t.as_str())) {
                         return None;
                     }
@@ -264,7 +298,12 @@ impl Store {
                         words: text.split_whitespace().count(),
                         has_audio: n.audio.is_some(),
                         audio_bytes: n.audio_bytes,
-                        snippet,
+                        snippet: if snippet.is_empty() {
+                            n.summary.as_deref().map(|s| s.chars().take(160).collect()).unwrap_or_default()
+                        } else {
+                            snippet
+                        },
+                        source: n.source.clone(),
                     },
                 ))
             })
@@ -324,6 +363,7 @@ impl Store {
         let Some(n) = notes.get(id) else { return Ok(None) };
         let mut n = n.clone();
         n.title = title;
+        n.title_edited = true;
         write_atomic(&self.dir.join(id).join("note.json"), &serde_json::to_vec_pretty(&n)?)?;
         notes.insert(id.to_string(), n.clone());
         Ok(Some(n))
@@ -335,8 +375,13 @@ impl Store {
             return Ok(false);
         }
         let mut notes = self.notes.lock().unwrap();
-        if notes.remove(id).is_none() {
-            return Ok(false);
+        let Some(old) = notes.remove(id) else { return Ok(false) };
+        if let Some(k) = &old.klang {
+            // remember it first, so a crash can't make a re-sync resurrect it
+            if let Err(e) = self.add_klang_tombstone(&k.id) {
+                notes.insert(id.to_string(), old);
+                return Err(e);
+            }
         }
         let dir = self.dir.join(id);
         let gone = self.dir.join(format!(".del-{id}"));
@@ -350,6 +395,45 @@ impl Store {
         }
         fs::remove_dir_all(&gone)?;
         Ok(true)
+    }
+
+    fn add_klang_tombstone(&self, klang_id: &str) -> Result<()> {
+        let mut t = self.klang_deleted.lock().unwrap();
+        if t.insert(klang_id.to_string()) {
+            let v: Vec<&String> = t.iter().collect();
+            write_atomic(&self.dir.join(KLANG_TOMBSTONES), &serde_json::to_vec_pretty(&v)?)?;
+        }
+        Ok(())
+    }
+
+    /// Was this Klang conversation deleted here?
+    pub fn klang_deleted(&self, klang_id: &str) -> bool {
+        self.klang_deleted.lock().unwrap().contains(klang_id)
+    }
+
+    /// The note imported from this Klang conversation, if any.
+    pub fn find_klang(&self, klang_id: &str) -> Option<Note> {
+        self.notes.lock().unwrap().values().find(|n| n.klang.as_ref().is_some_and(|k| k.id == klang_id)).cloned()
+    }
+
+    /// Replace the stored note.json of an existing note (audio untouched).
+    pub fn replace(&self, note: Note) -> Result<Note> {
+        if !valid_id(&note.id) {
+            bail!("invalid note id");
+        }
+        let mut notes = self.notes.lock().unwrap();
+        let Some(old) = notes.get(&note.id) else { bail!("note {} does not exist", note.id) };
+        let mut note = note;
+        note.audio = old.audio.clone();
+        note.audio_bytes = old.audio_bytes;
+        if old.title_edited && !note.title_edited {
+            // renamed while an import was running: the user's title wins
+            note.title = old.title.clone();
+            note.title_edited = true;
+        }
+        write_atomic(&self.dir.join(&note.id).join("note.json"), &serde_json::to_vec_pretty(&note)?)?;
+        notes.insert(note.id.clone(), note.clone());
+        Ok(note)
     }
 
     /// Path and content type of a note's audio file.
@@ -381,6 +465,7 @@ mod tests {
             backend: None,
             source_url: None,
             segments: vec![Segment { start: 0.0, end: 3.5, text: text.into() }],
+            ..Default::default()
         }
     }
 

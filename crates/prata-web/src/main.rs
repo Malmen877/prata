@@ -8,6 +8,7 @@
 //! Every finished job is saved as a note (see `notes.rs`): /api/notes…
 
 mod fetch;
+mod klang;
 mod notes;
 
 use std::{
@@ -553,6 +554,8 @@ struct AppState {
     notes: Store,
     ytdlp: Mutex<Option<fetch::YtDlp>>,
     net: fetch::NetPolicy,
+    /// Klang import; `None` unless KLANG_API_KEY is set
+    klang: Option<Arc<klang::Klang>>,
 }
 
 type St = Arc<AppState>;
@@ -770,6 +773,7 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
                     audio_bytes: 0,
                     backend: j.backend.clone(),
                     segments: segs.clone(),
+                    ..Default::default()
                 };
                 let st2 = st.clone();
                 let input2 = input.clone();
@@ -861,6 +865,7 @@ async fn info(State(st): State<St>) -> Json<serde_json::Value> {
         },
         "default_model": st.cfg.default_model,
         "url": url_info(&st.cfg, y.as_ref()),
+        "klang_enabled": st.klang.is_some(),
     }))
 }
 
@@ -1177,6 +1182,7 @@ async fn get_note(State(st): State<St>, AxPath(id): AxPath<String>) -> Response 
             let mut v = serde_json::to_value(&n).unwrap();
             v["text"] = text.into();
             v["has_audio"] = n.audio.is_some().into();
+            v["timed"] = n.segments.iter().any(|s| s.end > 0.0).into();
             Json(v).into_response()
         }
         None => err(StatusCode::NOT_FOUND, "okänd anteckning"),
@@ -1238,6 +1244,42 @@ async fn note_download(State(st): State<St>, AxPath((id, kind)): AxPath<(String,
     transcript_file(&n.title, &n.segments, json, &kind)
 }
 
+// ---------------------------------------------------------------- Klang import
+
+fn klang_state_json(s: &klang::State) -> serde_json::Value {
+    serde_json::json!({ "enabled": true, "running": s.running, "started_at": s.started_at, "last": s.last })
+}
+
+/// Start a sync (or join the one already running) and return the state right away.
+async fn klang_sync(State(st): State<St>) -> Response {
+    let Some(k) = st.klang.clone() else { return err(StatusCode::NOT_FOUND, "Klang är inte aktiverat (sätt KLANG_API_KEY)") };
+    if k.try_begin().await {
+        let st2 = st.clone();
+        let k2 = k.clone();
+        tokio::spawn(async move {
+            let k3 = k2.clone();
+            let run = tokio::spawn(async move { klang::sync(&k3.client, &st2.notes).await });
+            let report = match run.await {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("[klang] sync task failed: {e}");
+                    klang::Report { error: Some("Synken avbröts av ett internt fel.".into()), message: "Synken avbröts av ett internt fel.".into(), finished_at: chrono::Utc::now().timestamp(), ..Default::default() }
+                }
+            };
+            eprintln!("[klang] {}", report.message);
+            k2.end(report).await;
+        });
+    }
+    (StatusCode::ACCEPTED, Json(klang_state_json(&k.state().await))).into_response()
+}
+
+async fn klang_status(State(st): State<St>) -> Response {
+    match &st.klang {
+        None => Json(serde_json::json!({ "enabled": false })).into_response(),
+        Some(k) => Json(klang_state_json(&k.state().await)).into_response(),
+    }
+}
+
 // ---------------------------------------------------------------- static assets
 
 fn asset(ctype: &'static str, body: impl Into<Body>) -> Response {
@@ -1286,6 +1328,7 @@ fn app(st: St) -> Router {
         .route("/api/jobs/{id}/txt-ts", get(dl_txt_ts))
         .route("/api/jobs/{id}/srt", get(dl_srt))
         .route("/api/jobs/{id}/json", get(dl_json))
+        .route("/api/klang/sync", get(klang_status).post(klang_sync))
         .route("/api/notes", get(list_notes))
         .route("/api/notes/{id}", get(get_note).patch(patch_note).delete(delete_note))
         .route("/api/notes/{id}/audio", get(note_audio))
@@ -1332,6 +1375,17 @@ async fn main() -> Result<()> {
              For Tailscale, prefer the default 127.0.0.1 with `tailscale serve`."
         );
     }
+    let klang = match klang::Client::from_env() {
+        Ok(Some(c)) => {
+            eprintln!("klang: import enabled ({})", c.base());
+            Some(Arc::new(klang::Klang::new(c)))
+        }
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("prata-web: Klang: {e}");
+            std::process::exit(2);
+        }
+    };
     let ytdlp = fetch::probe_ytdlp(cfg.ytdlp.clone()).await;
     match &ytdlp {
         Some(y) => eprintln!("yt-dlp: {} ({})", y.version, y.path.display()),
@@ -1345,6 +1399,7 @@ async fn main() -> Result<()> {
         notes: store,
         ytdlp: Mutex::new(ytdlp),
         net: net_policy(),
+        klang,
     });
     let listener = tokio::net::TcpListener::bind(&addr).await.with_context(|| format!("bind {addr}"))?;
     eprintln!("prata-web listening on http://{addr}");
@@ -1375,7 +1430,121 @@ mod api_tests {
             gate: Semaphore::new(1),
             ytdlp: Mutex::new(None),
             net,
+            klang: None,
         })
+    }
+
+    #[tokio::test]
+    async fn klang_endpoints_single_flight_and_no_key_leak() {
+        let tmp = tempfile::tempdir().unwrap();
+        // disabled
+        let app0 = app(state(tmp.path()));
+        let (s, _, b) = call(&app0, "GET", "/api/info", None, None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["klang_enabled"], false);
+        let (s, _, _) = call(&app0, "POST", "/api/klang/sync", None, None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+
+        let convs = vec![
+            klang::mock::conv("conv_1", "Möte <script>alert(1)</script>", "ready", Some("2026-09-28T08:00:00Z"), "2026-09-28T09:00:00Z", "**Viktigt**", "[00:00:00] Ada: Hej."),
+            klang::mock::conv("conv_2", "Samtal", "ready", None, "2026-09-29T09:00:00Z", "", "Ada: utan tider"),
+        ];
+        let (m, base) = klang::mock::start(klang::mock::Mock { convs: convs.into(), page_size: 1, ..Default::default() }).await;
+        m.delay_ms.store(150, std::sync::atomic::Ordering::SeqCst);
+        let tmp2 = tempfile::tempdir().unwrap();
+        let st = state(tmp2.path());
+        let st = Arc::new(AppState {
+            klang: Some(Arc::new(klang::Klang::new(klang::mock::client(&base)))),
+            cfg: st.cfg.clone(),
+            notes: Store::open(&st.cfg.notes_dir).unwrap(),
+            prata: Mutex::new(PrataInfo::default()),
+            jobs: Mutex::new(HashMap::new()),
+            gate: Semaphore::new(1),
+            ytdlp: Mutex::new(None),
+            net: fetch::NetPolicy::strict(),
+        });
+        let a = app(st);
+        let mut all = Vec::new();
+        let (s, _, b) = call(&a, "GET", "/api/info", None, None).await;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["klang_enabled"], true);
+        all.extend(b);
+        // three concurrent POSTs → one sync
+        let (r1, r2, r3) = tokio::join!(
+            call(&a, "POST", "/api/klang/sync", None, None),
+            call(&a, "POST", "/api/klang/sync", None, None),
+            call(&a, "POST", "/api/klang/sync", None, None)
+        );
+        for r in [&r1, &r2, &r3] {
+            assert_eq!(r.0, StatusCode::ACCEPTED);
+            assert_eq!(serde_json::from_slice::<serde_json::Value>(&r.2).unwrap()["running"], true);
+            all.extend(r.2.clone());
+        }
+        let mut last = serde_json::Value::Null;
+        for _ in 0..100 {
+            let (_, _, b) = call(&a, "GET", "/api/klang/sync", None, None).await;
+            all.extend(b.clone());
+            last = serde_json::from_slice(&b).unwrap();
+            if last["running"] == false {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(last["last"]["new"], 2, "{last}");
+        assert_eq!(last["last"]["message"], "Klang: 2 nya, 0 uppdaterade, 0 oförändrade, 0 hoppades över.");
+        assert_eq!(m.list_calls.load(std::sync::atomic::Ordering::SeqCst), 2, "single flight: 2 pages listed once");
+        assert_eq!(m.detail_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let (_, _, b) = call(&a, "GET", "/api/notes", None, None).await;
+        all.extend(b.clone());
+        let list: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        let items = list["notes"].as_array().or(list.as_array()).unwrap().clone();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|n| n["source"] == "klang" && n["has_audio"] == false));
+        let id_of = |k: &str| klang::note_id(k);
+        let (_, _, b) = call(&a, "GET", &format!("/api/notes/{}", id_of("conv_1")), None, None).await;
+        all.extend(b.clone());
+        let n: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(n["summary"], "**Viktigt**");
+        assert_eq!(n["timed"], true);
+        assert_eq!(n["klang"]["id"], "conv_1");
+        let (_, _, b) = call(&a, "GET", &format!("/api/notes/{}", id_of("conv_2")), None, None).await;
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&b).unwrap()["timed"], false);
+        let (s, _, b) = call(&a, "GET", &format!("/api/notes/{}/txt", id_of("conv_2")), None, None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&b).contains("Ada: utan tider"));
+        let (s, _, _) = call(&a, "GET", &format!("/api/notes/{}/audio", id_of("conv_2")), None, None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        // delete → tombstone → re-sync skips it
+        let (s, _, _) = call(&a, "DELETE", &format!("/api/notes/{}", id_of("conv_2")), None, None).await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+        call(&a, "POST", "/api/klang/sync", None, None).await;
+        for _ in 0..100 {
+            let (_, _, b) = call(&a, "GET", "/api/klang/sync", None, None).await;
+            all.extend(b.clone());
+            last = serde_json::from_slice(&b).unwrap();
+            if last["running"] == false {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!((last["last"]["new"].as_u64(), last["last"]["unchanged"].as_u64(), last["last"]["skipped"].as_u64()), (Some(0), Some(1), Some(1)), "{last}");
+        let all = String::from_utf8_lossy(&all);
+        assert!(!all.contains(klang::mock::KEY), "API key leaked into a response");
+        // nor into the note files
+        for e in walk(&tmp2.path().join("notes")) {
+            let c = std::fs::read(&e).unwrap();
+            assert!(!String::from_utf8_lossy(&c).contains(klang::mock::KEY), "{}", e.display());
+        }
+    }
+
+    fn walk(d: &Path) -> Vec<PathBuf> {
+        let mut out = vec![];
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() { out.extend(walk(&p)) } else { out.push(p) }
+        }
+        out
     }
 
     async fn wait_job(app: &Router, id: &str) -> serde_json::Value {
@@ -1513,6 +1682,7 @@ mod api_tests {
                 Segment { start: 0.0, end: 1.0, text: text.into() },
                 Segment { start: 1.0, end: 2.0, text: "Slut.".into() },
             ],
+            ..Default::default()
         }
     }
 
