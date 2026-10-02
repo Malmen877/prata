@@ -2,7 +2,7 @@ Prata
 Copyright (c) 2026 Kevin Malmgren – MIT License (see LICENSE)
 
 Prata is an independent project. It is not affiliated with or endorsed by
-the National Library of Sweden (KBLab), Hugging Face or OpenAI.
+the National Library of Sweden (KBLab), KlangAI, Hugging Face or OpenAI.
 
 Third-party components and models
 ---------------------------------
@@ -16,6 +16,21 @@ KB-Whisper models (KBLab, National Library of Sweden / Kungliga biblioteket)
   Citation: Vesterbacka, L., Rekathati, F., Kurtz, R., Sikora, J., Toftgård, A.
   (2025) Swedish Whispers; Leveraging a Massive Speech Corpus for Swedish Speech
   Recognition. Proc. Interspeech 2025, 758-762, doi:10.21437/Interspeech.2025-2646
+
+Klang Pianissimo ("Snabb" in Prata) (KlangAI)
+  https://huggingface.co/KlangAI/pianissimo-sv
+  License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+  Prata uses KlangAI's official int8 ONNX export of this model,
+  https://huggingface.co/KlangAI/pianissimo-sv-onnx (encoder-model.int8.onnx,
+  decoder_joint-model.int8.onnx, vocab.txt), without modifications.
+  The model files are NOT included in this repository or in the release
+  archives. They are downloaded by the user from Hugging Face on first use.
+
+ONNX Runtime (via the ort crate, https://github.com/pykeio/ort)
+  https://github.com/microsoft/onnxruntime
+  License: MIT (onnxruntime) / MIT OR Apache-2.0 (ort)
+  Linked statically into builds with the "snabb" feature.
 
 Hugging Face Candle (candle-core, candle-nn, candle-transformers)
   https://github.com/huggingface/candle

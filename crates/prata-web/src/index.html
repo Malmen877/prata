@@ -72,6 +72,18 @@ h1{font-size:48px;line-height:1.05;letter-spacing:-.035em;font-weight:500;margin
 .seg button[aria-pressed=true] small{color:var(--ink-2)}
 .seg button:focus-visible{outline:3px solid var(--ts);outline-offset:1px}
 .seg button:disabled{cursor:not-allowed}
+.seg button{min-width:92px}
+.seg button[data-off="1"]{opacity:.45;cursor:not-allowed}
+.timer.dim{color:var(--ink-3)}
+#jobHint{color:var(--ink-2)}
+.minfo{max-width:440px;min-height:2.9em;margin:4px auto 0;font-size:12.5px;line-height:1.45;color:var(--ink-3);text-wrap:pretty}
+.minfo b{font-weight:600;color:var(--ink-2)}
+.minfo .attr{display:block;margin-top:2px;font-size:11.5px}
+.minfo a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.longhint{all:unset;cursor:pointer;display:block;max-width:460px;margin:-24px auto 22px;padding:6px 12px;border-radius:var(--r-pill);font-size:12.5px;line-height:1.4;color:var(--ink-2);background:var(--surface-2);text-wrap:pretty}
+.longhint u{text-underline-offset:2px}
+.longhint:hover{color:var(--ink)}
+.longhint:focus-visible{outline:3px solid var(--ts);outline-offset:2px}
 .pillselect{display:none;appearance:none;-webkit-appearance:none;height:36px;padding:0 34px 0 16px;border:1px solid var(--line-strong);border-radius:var(--r-pill);background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238C8D92' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 14px center;font-size:13.5px;font-weight:500;color:var(--ink)}
 .is-off{opacity:.5;pointer-events:none}
 /* record button */
@@ -308,7 +320,8 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
   section{margin:28px 0}
 }
 @media (max-width:760px){.hero{grid-template-columns:1fr;padding-top:40px}h1{font-size:36px}.seg-row{grid-template-columns:1fr;gap:4px}.seg-row .cp{opacity:1;justify-self:start}.recorder{padding:24px 18px 20px}.stage{padding:32px 12px}}
-@media (max-width:520px){.seg{display:none}.pillselect{display:inline-block}.player{padding:12px 16px}.tools,.res-head{padding-left:16px;padding-right:16px}}
+@media (max-width:520px){.seg{width:100%;max-width:340px;box-sizing:border-box}.seg button{flex:1 1 0;min-width:0;padding:9px 4px}.minfo{font-size:13px}.player{padding:12px 16px}.tools,.res-head{padding-left:16px;padding-right:16px}}
+@media (max-width:359px){.seg{display:none}.pillselect{display:inline-block;max-width:100%}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
   .recbtn.on{box-shadow:var(--sh-rec)}.bar.indet>i{left:30%}.spin,.recbtn .ring{animation:none!important}}
 </style>
@@ -338,21 +351,19 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
   <div class="recorder">
     <div class="rtop" id="modelBox">
       <div class="rlabel" id="modelLbl">Modell</div>
+      <!-- rendered from /api/info.picker (Snabb, Standard, Large); tiny/base/medium still work via CLI/API -->
       <div class="seg" id="modelSeg" role="group" aria-labelledby="modelLbl">
-        <button type="button" data-model="tiny" aria-pressed="false">tiny<small>snabbast</small></button>
-        <button type="button" data-model="base" aria-pressed="false">base<small>snabb</small></button>
-        <button type="button" data-model="small" aria-pressed="true">small<small>rekommenderad</small></button>
-        <button type="button" data-model="medium" aria-pressed="false">medium<small>bättre</small></button>
-        <button type="button" data-model="large" aria-pressed="false" title="Långsam och minneskrävande på CPU">large<small>bäst kvalitet</small></button>
+        <button type="button" data-model="small" aria-pressed="true">Standard<small>rekommenderad</small></button>
+        <button type="button" data-model="large" aria-pressed="false">Large<small>högst kvalitet</small></button>
       </div>
       <select id="model" class="pillselect" aria-labelledby="modelLbl">
-        <option value="tiny">tiny · snabbast</option>
-        <option value="base">base · snabb</option>
-        <option value="small" selected>small · rekommenderad</option>
-        <option value="medium">medium · bättre</option>
-        <option value="large" title="Långsam och minneskrävande på CPU">large · bäst kvalitet</option>
+        <option value="small" selected>Standard · rekommenderad</option>
+        <option value="large">Large · högst kvalitet</option>
       </select>
+      <div class="minfo hidden" id="modelInfo" aria-live="polite"></div>
     </div>
+    <!-- shown for files/recordings over 15 min while Standard is selected; switches only on click -->
+    <button type="button" class="longhint hidden" id="longHint">Lång inspelning – Snabb går betydligt fortare. <u>Byt till Snabb</u></button>
 
     <button type="button" class="recbtn" id="rec" aria-describedby="recStatus">
       <svg class="mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
@@ -398,6 +409,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
     <div class="meta" id="elapsed"></div>
     <div class="bar indet" id="bar" role="progressbar" aria-label="Förlopp"><i id="barFill"></i></div>
     <div class="steps" id="steps"></div>
+    <div class="meta full hidden" id="jobHint"></div>
     <div class="meta full hidden" id="conn"><span class="conn">Tappade kontakt med servern, försöker igen …</span></div>
     <div class="full hidden" id="errBox"><div class="err" id="err" role="alert"></div>
       <div style="margin-top:12px"><button type="button" class="btn" id="retry">Försök igen</button></div></div>
@@ -511,35 +523,137 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 async function loadInfo() {
   try {
     const i = await (await fetch("/api/info")).json();
-    if (i.default_model) setModel(i.default_model);
+    modelsSetup(i);
     urlInfo = i.url || null; linkHint();
     klangSetup(i.klang_enabled === true);
   } catch (_) {}
 }
 
 // ------------------------------------------------------------ model picker (drives hidden/compact <select id="model">)
-const segBtns = [...document.querySelectorAll("#modelSeg button")];
+// Picker: Snabb, Standard (small, default), Large. /api/info.models[] = {id,label,description,available,
+// unsupported_reason,downloaded,size_bytes,license} supplies labels and availability. If the server also
+// sends /api/info.picker (ordered ids) that order is used as is; otherwise the UI shows Snabb (only if
+// listed), small and large. tiny/base/medium are never offered here but keep working via CLI/API.
+const DEFAULT_MODEL = "small";
+const FALLBACK = {   // used only when the server sends no label/description
+  snabb: ["Snabb", "Klang Pianissimo – mycket bra svenska, snabbast. Rekommenderas för långa inspelningar"],
+  small: ["Standard", "Bästa balansen mellan kvalitet och tid"],
+  large: ["Large", "Högst kvalitet, långsammast"],
+};
+const SUB = { snabb: "snabbast", small: "rekommenderad", large: "högst kvalitet" };   // short sub-label in the button
+const SNABB_URL = "https://huggingface.co/KlangAI/pianissimo-sv";
+let modelMeta = {}, pickerIds = ["small", "large"], defaultModel = DEFAULT_MODEL, segBtns = [];
+function modelLabel(m) { return (modelMeta[m] && modelMeta[m].label) || (FALLBACK[m] || [])[0] || m || ""; }
+function modelDesc(m) { return ((modelMeta[m] && modelMeta[m].description) || (FALLBACK[m] || [])[1] || "").replace(/\.$/, ""); }
+function modelOff(m) { return !!(modelMeta[m] && modelMeta[m].available === false); }
+function modelPickable(m) { return pickerIds.includes(m) && !modelOff(m); }
+function modelsSetup(info) {
+  modelMeta = {};
+  (Array.isArray(info.models) ? info.models : []).forEach(m => { if (m && m.id) modelMeta[m.id] = m; });
+  if (Array.isArray(info.picker) && info.picker.length) pickerIds = info.picker.filter(id => typeof id === "string");
+  else pickerIds = (modelMeta.snabb ? ["snabb"] : []).concat(["small", "large"]);   // older server
+  defaultModel = modelPickable(info.default_model) ? info.default_model : modelPickable(DEFAULT_MODEL) ? DEFAULT_MODEL : pickerIds.find(modelPickable) || DEFAULT_MODEL;
+  renderPicker();
+}
+function renderPicker() {
+  const seg = $("modelSeg"), sel = $("model"), cur = sel.value;
+  seg.innerHTML = pickerIds.map(id => {
+    const off = modelOff(id), reason = off ? (modelMeta[id].unsupported_reason || "Finns inte för den här datorn") : modelDesc(id);
+    return `<button type="button" data-model="${esc(id)}" aria-pressed="false"${off ? ' data-off="1" aria-disabled="true"' : ""} title="${esc(reason)}" aria-describedby="modelInfo">${esc(modelLabel(id))}${SUB[id] ? `<small>${esc(SUB[id])}</small>` : ""}</button>`;
+  }).join("");
+  sel.innerHTML = pickerIds.map(id => `<option value="${esc(id)}"${modelOff(id) ? " disabled" : ""}>${esc(modelLabel(id))}${SUB[id] ? " · " + esc(SUB[id]) : ""}</option>`).join("");
+  segBtns = [...seg.querySelectorAll("button")];
+  segBtns.forEach((b, i) => {
+    b.onclick = () => { if (b.dataset.off === "1") { modelInfoShow(b.dataset.model); return; } setModel(b.dataset.model); };
+    b.onkeydown = e => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      let k = i;
+      do { k = (k + d + segBtns.length) % segBtns.length; } while (!modelPickable(segBtns[k].dataset.model) && k !== i);
+      segBtns[k].focus(); setModel(segBtns[k].dataset.model);
+    };
+  });
+  setModel(modelPickable(cur) ? cur : defaultModel);
+}
 function setModel(m) {
+  if (!modelPickable(m)) m = modelPickable(defaultModel) ? defaultModel : DEFAULT_MODEL;   // hidden/unknown/unavailable → Standard
   const sel = $("model");
-  if (![...sel.options].some(o => o.value === m)) { const o = new Option(m, m); sel.add(o); }
+  if (![...sel.options].some(o => o.value === m)) sel.add(new Option(modelLabel(m), m));   // only if the picker is empty
   sel.value = m;
   segBtns.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.model === m)));
+  modelInfoShow(m); hintRefresh();
 }
-segBtns.forEach((b, i) => {
-  b.onclick = () => setModel(b.dataset.model);
-  b.onkeydown = e => {
-    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-    if (!d) return;
-    e.preventDefault();
-    const n = segBtns[(i + d + segBtns.length) % segBtns.length];
-    n.focus(); setModel(n.dataset.model);
-  };
-});
+function fmtMB(b) { return b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + "\u00a0GB" : Math.round(b / 1e6) + "\u00a0MB"; }
+// One quiet line under the picker: what the model is for; for Snabb also first-use download and attribution.
+function modelInfoShow(m) {
+  const box = $("modelInfo"), meta = modelMeta[m] || {};
+  if (modelOff(m)) { box.innerHTML = `<b>${esc(modelLabel(m))}</b> – ${esc(meta.unsupported_reason || "Finns inte för den här datorn.")}`; box.classList.remove("hidden"); return; }
+  const d = modelDesc(m);
+  if (!d) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  let html = `${esc(d)}.`;
+  if (meta.downloaded === false && meta.size_bytes) html += ` Laddas ner första gången (ca ${fmtMB(meta.size_bytes)}).`;
+  const lic = meta.license || (m === "snabb" ? {} : null);
+  if (lic) {
+    const url = esc(lic.model_url || SNABB_URL), licUrl = esc(lic.url || "https://creativecommons.org/licenses/by/4.0/");
+    html += ` <span class="attr">Modell: <a href="${url}" target="_blank" rel="noopener noreferrer">Klang Pianissimo</a> av ${esc(lic.author || "KlangAI")}, <a href="${licUrl}" target="_blank" rel="noopener noreferrer">${esc(lic.name || "CC BY 4.0")}</a>.</span>`;
+  }
+  box.innerHTML = html; box.classList.remove("hidden");
+}
 $("model").onchange = e => setModel(e.target.value);
+
+// Long-recording hint. The rule lives on the server (contract v4, crates/prata-web/src/hint.rs):
+//   GET /api/model-hint?duration_s=<s>&model=<id> → {suggest: "snabb"|null, reason: "<Swedish>"}
+// (a {hint: {text, suggest_model}} body is accepted too). Shown discreetly; switches only on click;
+// any error or unknown duration → no hint.
+const HINT_TEXT = "Lång inspelning – Snabb går betydligt fortare";
+let hintDur = null, hintObj = null, hintSeq = 0;
+function hintFor(dur) { hintDur = dur; hintRefresh(); }
+function hintParse(b) {
+  if (!b) return null;
+  if (b.hint && b.hint.text) return { text: b.hint.text, suggest_model: b.hint.suggest_model || null };
+  if (b.suggest) return { text: (b.reason || "").trim() || HINT_TEXT, suggest_model: b.suggest };
+  return null;
+}
+async function hintRefresh() {
+  const seq = ++hintSeq, model = $("model").value, dur = hintDur;
+  if (dur == null || !(dur > 0)) return hintShow(null);
+  let h = null;
+  try {
+    const r = await fetch(`/api/model-hint?duration_s=${Math.round(dur)}&model=${encodeURIComponent(model)}`);
+    if (r.ok) h = hintParse(await r.json());
+  } catch (_) {}
+  if (seq === hintSeq) hintShow(h);
+}
+function hintShow(h) {
+  hintObj = h && h.text ? h : null;
+  const el = $("longHint"), can = !!(hintObj && hintObj.suggest_model && modelPickable(hintObj.suggest_model));
+  el.classList.toggle("hidden", !hintObj);
+  if (!hintObj) return;
+  const t = String(hintObj.text).trim();
+  el.innerHTML = esc(t) + (can ? `${/[.!?]$/.test(t) ? "" : "."} <u>Byt till ${esc(modelLabel(hintObj.suggest_model))}</u>` : "");
+  el.disabled = !can;
+}
+renderPicker();   // defaults until /api/info answers
+$("longHint").onclick = () => { if (hintObj && modelPickable(hintObj.suggest_model)) setModel(hintObj.suggest_model); };
+function probeDuration(f, cb) {   // duration from the file's metadata; null if the browser can't tell
+  let done = false, u = null;
+  const a = new Audio();
+  const fin = d => { if (done) return; done = true; a.onloadedmetadata = a.onerror = null; a.removeAttribute("src"); try { a.load(); } catch (_) {} if (u) URL.revokeObjectURL(u); cb(d); };
+  try {
+    u = URL.createObjectURL(f); a.preload = "metadata";
+    a.onloadedmetadata = () => fin(isFinite(a.duration) && a.duration > 0 ? a.duration : null);
+    a.onerror = () => fin(null);
+    setTimeout(() => fin(null), 10000);
+    a.src = u;
+  } catch (_) { fin(null); }
+}
 
 // ------------------------------------------------------------ file pick / drop zone
 function pick(f) {
   file = f || null;
+  hintFor(null);
+  if (file) { const me = file; probeDuration(me, d => { if (file === me && d) hintFor(d); }); }
   $("drop").classList.toggle("has-file", !!file);
   $("dropText").classList.toggle("hidden", !!file);
   $("dropFile").classList.toggle("hidden", !file);
@@ -588,6 +702,7 @@ function setRecState(state, extra) {   // idle | recording | processing | done
   else if (state === "done") st.textContent = extra;
   else st.textContent = phoneQ.matches ? "Tryck för att spela in" : "Tryck för att spela in · eller släpp en fil nedan";
   $("wave").classList.toggle("frozen", state === "processing");
+  $("recTime").classList.toggle("dim", state === "idle");
   if (state === "idle" || state === "done") { hist = []; drawWave(); }
 }
 
@@ -602,40 +717,61 @@ function setSteps(status) {
     if (status === "done" || i < idx || (i === 0 && idx >= 0)) { cls = "done"; pre = "✓ "; }
     else if (i === idx || (idx === -1 && i === 0)) { cls = "cur"; pre = "● "; }
     if (i === 0 && idx === -1) l = jobIsLink ? "Laddar ner" : "Laddar upp";
+    if (i === 2 && cls === "cur" && modelPhase === "model") l = "Laddar ner modell";
     return `<span class="${cls}">${pre}${l}${cls === "cur" && curPct != null ? " " + curPct + " %" : ""}</span>`;
   }).join("");
 }
-let curPct = null;
+let curPct = null, modelPhase = null;
+function modelDlText(m) {   // first use: the model is fetched once, then cached
+  const meta = modelMeta[m], size = meta && meta.size_bytes ? ", ca " + fmtMB(meta.size_bytes) : "";
+  return `Laddar ner ${m === "snabb" ? "Snabb-modellen" : "modellen"} (första gången${size}) …`;
+}
 function setBar(pct, failed) {
   const bar = $("bar"), fill = $("barFill");
   if (pct == null) { bar.classList.add("indet"); fill.style.width = ""; bar.removeAttribute("aria-valuenow"); }
   else { bar.classList.remove("indet"); fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", pct); }
 }
-function progressPct(j) {
-  if (j.status === "done") return 100;
-  if (j.status === "downloading") return j.download_pct != null ? Math.round(j.download_pct) : null;
-  if (j.status !== "running") return null;
+// --- progress:start (pure; unit-tested in scripts/test-ui.mjs)
+// Job progress from the server's job JSON: {pct: 0..100|null, phase: "model"|null}.
+// phase "model": the prata CLI is fetching model files on first use (status stays "running").
+//   KB-Whisper prints "[info] downloading <repo>/<file> ..." (no percentage);
+//   Snabb also prints "[info] downloading <file>: <pct>% of <MB> MB", and the server may add
+//   job.model_download_pct (aggregate over all files, by bytes), which wins when present.
+function jobProgress(j) {
+  if (j.status === "done") return { pct: 100, phase: null };
+  if (j.status === "downloading") return { pct: j.download_pct != null ? Math.round(j.download_pct) : null, phase: null };
+  if (j.status !== "running") return { pct: null, phase: null };
   const lines = (j.log_tail || []).concat(j.progress || "");
-  let pct = null;
+  let pct = null, phase = null;
   for (const l of lines) {
-    const w = /window\s+(\d+(?:\.\d+)?)s\s+done/.exec(l);          // prata: "[info] window 30.0s done in 9.1s"
+    if (/^\[info\] downloading /.test(l)) {                        // model files, first use
+      const d = /:\s*(\d{1,3})\s?%\s+of\s/.exec(l);
+      if (phase !== "model") pct = null;
+      phase = "model"; pct = d && +d[1] <= 100 ? +d[1] : pct;
+      continue;
+    }
+    if (/^\[info\] /.test(l)) { if (phase === "model") pct = null; phase = null; }
+    const w = /window\s+(\d+(?:\.\d+)?)s(?:\s+done|:\s*no speech)/.exec(l);  // prata: "[info] window 30.0s done in 9.1s"
     if (w && j.audio_duration) pct = Math.min(99, Math.round((parseFloat(w[1]) + 30) / j.audio_duration * 100));
     const p = /(\d{1,3})\s?%/.exec(l);                              // tqdm style "45%"
     if (p && +p[1] <= 100) pct = +p[1];
   }
-  return pct;
+  if (phase === "model" && j.model_download_pct != null) pct = Math.max(0, Math.min(100, Math.round(j.model_download_pct)));
+  return { pct, phase };
 }
+function progressPct(j) { return jobProgress(j).pct; }
+// --- progress:end
 
 async function startJob(blob, filename) {
   if (busy) return;
   clearInterval(timer); clearTimeout(hideProcT);
-  busy = true; lastMedia = { blob, filename }; curPct = null; jobIsLink = false; lastLink = null;
+  busy = true; lastMedia = { blob, filename }; curPct = null; modelPhase = null; hintFor(null); jobIsLink = false; lastLink = null;
   setRecState("processing");
   go("#/");
   $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
   $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
   $("statusText").textContent = STATUS.uploading; $("procFile").textContent = filename;
-  $("elapsed").textContent = $("model").value; setSteps("uploading"); setBar(null);
+  $("elapsed").textContent = modelLabel($("model").value); setSteps("uploading"); setBar(null);
   const fd = new FormData(); fd.append("model", $("model").value); fd.append("file", blob, filename);
   try {
     const r = await fetch("/api/jobs", { method: "POST", body: fd });
@@ -722,14 +858,14 @@ async function startUrlJob(url) {
   if (busy) return;
   clearInterval(timer); clearTimeout(hideProcT);
   linkError("");
-  busy = true; lastLink = url; lastMedia = null; curPct = null; jobIsLink = true;
+  busy = true; lastLink = url; lastMedia = null; curPct = null; modelPhase = null; hintFor(null); jobIsLink = true;
   setRecState("processing", "Laddar ner …");
   go("#/");
   $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
   $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
   let host = url; try { host = new URL(url).hostname; } catch (_) {}
   $("statusText").textContent = STATUS.downloading; $("procFile").textContent = host;
-  $("elapsed").textContent = $("model").value; setSteps("downloading"); setBar(null);
+  $("elapsed").textContent = modelLabel($("model").value); setSteps("downloading"); setBar(null);
   try {
     const r = await fetch("/api/jobs/url", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, model: $("model").value }) });
     let j = {}; try { j = await r.json(); } catch (_) {}
@@ -762,12 +898,17 @@ async function poll() {
     return jobFailed(j.source_url ? "Länken kunde inte transkriberas." : "Transkriberingen misslyckades.", j.error_user || humanError(j.error));
   }
   if (j.source_url) jobIsLink = true;
-  curPct = progressPct(j);
-  $("statusText").textContent = STATUS[j.status] || j.status;
+  const prog = jobProgress(j); curPct = prog.pct; modelPhase = prog.phase;
+  if (typeof j.progress_pct === "number") curPct = Math.max(0, Math.min(100, Math.round(j.progress_pct)));
+  if (j.model_download_pct != null && j.status === "running") modelPhase = "model";
+  const phaseText = j.phase_text || (modelPhase === "model" ? modelDlText(j.model) : STATUS[j.status] || j.status);
+  $("statusText").textContent = phaseText;
+  const jhint = j.hint && j.hint.text ? j.hint.text : "";   // optional: if the server adds a hint to the job
+  const jh = $("jobHint"); jh.textContent = jhint; jh.classList.toggle("hidden", !jhint || j.status === "done");
   $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
-  $("elapsed").textContent = `${Math.round(j.elapsed_s)} s · ${j.model}`;
+  $("elapsed").textContent = `${Math.round(j.elapsed_s)} s · ${modelLabel(j.model)}`;
   setSteps(j.status); setBar(curPct);
-  if (busy && j.status !== "done") setRecState("processing", (STATUS[j.status] || "Transkriberar …") + (curPct != null ? " " + curPct + " %" : ""));
+  if (busy && j.status !== "done") setRecState("processing", phaseText + (curPct != null && !/%/.test(phaseText) ? " " + curPct + " %" : ""));
   if (j.status === "done") {
     clearInterval(timer); busy = false;
     try { localStorage.removeItem("prata.job"); } catch (_) {}
@@ -795,7 +936,7 @@ function render(n, q) {
   const klang = n.source === "klang", timed = n.timed !== false;
   $("meta").textContent = (klang
     ? [DATED.test(n.title) ? "" : fmtDate(n.created), n.audio_duration ? fmtShort(n.audio_duration) + " samtal" : "", wordCount(segData) + " ord", "från Klang"]
-    : [DATED.test(n.title) ? "" : fmtDate(n.created), fmtShort(n.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + n.model]).filter(Boolean).join(" · ");
+    : [DATED.test(n.title) ? "" : fmtDate(n.created), fmtShort(n.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + modelLabel(n.model)]).filter(Boolean).join(" · ");
   const base = `/api/notes/${n.id}/`, stem = safeStem(n.title);
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
@@ -826,7 +967,7 @@ function showSource(u) {
 function showJobResult(j) {
   go("#/notes/"); curNote = null; segData = j.segments || []; activeIdx = -1;
   $("resTitle").textContent = j.filename.replace(/\.[^.]+$/, ""); closeRename();
-  $("meta").textContent = [fmtShort(j.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + j.model, "inte sparad"].join(" · ");
+  $("meta").textContent = [fmtShort(j.audio_duration) + " ljud", wordCount(segData) + " ord", "modell " + modelLabel(j.model), "inte sparad"].join(" · ");
   const base = `/api/jobs/${j.id}/`, stem = safeStem(j.filename.replace(/\.[^.]+$/, ""));
   [["dlTxt", "txt", ".txt"], ["dlTxtTs", "txt-ts", "-tider.txt"], ["dlSrt", "srt", ".srt"], ["dlJson", "json", ".json"]]
     .forEach(([id, k, ext]) => { const a = $(id); a.href = base + k; a.setAttribute("download", stem + ext); });
@@ -1135,7 +1276,11 @@ async function startRecording() {
   };
   rec.start(1000);
   recStart = Date.now(); $("recTime").textContent = "00:00";
-  recTick = setInterval(() => { $("recTime").textContent = fmtShort((Date.now() - recStart) / 1000); }, 250);
+  recTick = setInterval(() => {
+    const el = (Date.now() - recStart) / 1000;
+    $("recTime").textContent = fmtShort(el);
+    if (el - (hintDur || 0) >= 60) hintFor(el);   // ask the server about once a minute while recording
+  }, 250);
   setRecState("recording");
   startMeter(recStream);
 }
