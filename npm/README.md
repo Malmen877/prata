@@ -16,7 +16,8 @@ What it does:
 3. Checks that `ffmpeg` is installed, and warns (without stopping) if `yt-dlp` is missing – it is only needed
    for links to web pages such as YouTube (`brew install yt-dlp`); direct audio/video links work without it.
 4. Starts `prata-web` on `127.0.0.1` (port 8795, or a free port), waits until it responds and opens your browser.
-5. Ctrl+C stops the server. The server log is in `~/.prata/prata-web.log`.
+5. Ctrl+C stops the server. prata-web's own log lines appear in the same terminal (or in the LaunchAgent's
+   `StandardOutPath`/`StandardErrorPath` file); earlier versions wrote them to `~/.prata/prata-web.log`.
 
 The first transcription downloads the selected model from Hugging Face (small ≈ 0.6 GB, large ≈ 3 GB) into
 `~/.cache/huggingface/`. Nothing else leaves your machine.

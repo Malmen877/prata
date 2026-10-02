@@ -235,11 +235,9 @@ async function main() {
   if (fs.existsSync(py) && !env.PRATA_PYTHON_SCRIPT) env.PRATA_PYTHON_SCRIPT = py;
   if (opt("--model")) env.PRATA_MODEL = opt("--model");
 
-  const logDir = process.env.PRATA_CACHE_DIR || path.join(os.homedir(), ".prata");
-  fs.mkdirSync(logDir, { recursive: true });
-  const logFile = path.join(logDir, "prata-web.log");
-  const logFd = fs.openSync(logFile, "a");
-  const child = spawn(path.join(dir, "prata-web"), [], { env, stdio: ["ignore", logFd, logFd] });
+  // prata-web's own log lines (startup, jobs, Klang syncs …) go to the same stdout/stderr as
+  // the launcher's, so a LaunchAgent's StandardOutPath/StandardErrorPath captures everything.
+  const child = spawn(path.join(dir, "prata-web"), [], { env, stdio: ["ignore", "inherit", "inherit"] });
   child.on("error", (e) => die(`could not start prata-web: ${e.message}`));
 
   let stopping = false;
@@ -248,15 +246,15 @@ async function main() {
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGHUP", () => stop("SIGTERM"));
   child.on("exit", (code, signal) => {
-    if (!stopping) log(`prata-web exited (${signal || code}). Log: ${logFile}`);
+    if (!stopping) log(`prata-web exited (${signal || code}).`);
     process.exit(stopping ? 0 : (code || 1));
   });
 
   const url = `http://127.0.0.1:${port}/`;
   try { await waitFor(url + "api/info", child); }
   catch (e) {
-    let tail = ""; try { tail = fs.readFileSync(logFile, "utf8").split("\n").slice(-15).join("\n"); } catch (_) {}
-    stop("SIGTERM"); die(`${e.message}\n${tail}`);
+    if (child.exitCode !== null) { log(`prata-web exited (${child.exitCode}).`); process.exit(child.exitCode || 1); }
+    stop("SIGTERM"); die(`${e.message} (see prata-web's messages above)`);
   }
   log(`Prata körs på ${url}  (Ctrl+C för att avsluta)`);
   log("Första transkriberingen laddar ner modellen från Hugging Face (small ≈ 0.6 GB, large ≈ 3 GB).");
