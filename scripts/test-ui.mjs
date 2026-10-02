@@ -68,3 +68,30 @@ assert.equal(md(""), "");
 assert.ok(!/<(?!\/?(p|br|ul|ol|li|h4|strong|em|code|a|blockquote|hr)\b)/.test(md("<b>x</b> <iframe> <svg onload=1> \u0000 x")), "only whitelisted tags");
 console.log("ui markdown tests: ok");
 assert.equal(md("- punkt\n  fortsätter"), "<ul><li>punkt fortsätter</li></ul>");
+
+// ---- job progress: model download on first use (KB-Whisper and Snabb) vs transcription
+const pm = /\/\/ --- progress:start[^\n]*\n([\s\S]*?)\/\/ --- progress:end/.exec(html);
+assert.ok(pm, "progress markers not found");
+const pctx = {};
+vm.runInNewContext(pm[1] + "\nthis.jobProgress = jobProgress; this.progressPct = progressPct;", pctx);
+const jp = j => JSON.parse(JSON.stringify(pctx.jobProgress(j)));
+const run = (lines, extra = {}) => ({ status: "running", audio_duration: 300, log_tail: lines, progress: lines[lines.length - 1] || "", ...extra });
+// KB-Whisper, unchanged: window lines and tqdm-style percentages
+assert.deepEqual(jp(run(["[info] model=KBLab/kb-whisper-small device=Cpu", "[info] window 30.0s done in 9.1s"])), { pct: 20, phase: null });
+assert.deepEqual(jp(run(["Transcribing: 45%|████"])), { pct: 45, phase: null });
+assert.deepEqual(jp({ status: "downloading", download_pct: 12.6 }), { pct: 13, phase: null });
+assert.deepEqual(jp({ status: "done" }), { pct: 100, phase: null });
+assert.deepEqual(jp({ status: "queued" }), { pct: null, phase: null });
+// KB-Whisper first use: download line without a percentage -> indeterminate model phase
+assert.deepEqual(jp(run(["[info] downloading KBLab/kb-whisper-small/model.safetensors ..."])), { pct: null, phase: "model" });
+assert.deepEqual(jp(run(["[info] downloading KBLab/kb-whisper-small/model.safetensors ...", "[info] model=KBLab/kb-whisper-small device=Cpu"])), { pct: null, phase: null });
+// Snabb first use: per-file percentage from stderr, aggregate model_download_pct wins
+const snabbHead = "[info] downloading KlangAI/pianissimo-sv-onnx/encoder-model.int8.onnx (Klang Pianissimo, CC BY 4.0) ...";
+assert.deepEqual(jp(run([snabbHead])), { pct: null, phase: "model" });
+assert.deepEqual(jp(run([snabbHead, "[info] downloading encoder-model.int8.onnx: 42% of 630 MB"])), { pct: 42, phase: "model" });
+assert.deepEqual(jp(run([snabbHead, "[info] downloading encoder-model.int8.onnx: 42% of 630 MB"], { model_download_pct: 44.4 })), { pct: 44, phase: "model" });
+// download done, transcription started: percentage comes from windows again, not from "100% of"
+assert.deepEqual(jp(run([snabbHead, "[info] downloading encoder-model.int8.onnx: 100% of 630 MB", "[info] window 0.0s done in 1.2s (1/10)"], { model_download_pct: 100 })), { pct: 10, phase: null });
+assert.deepEqual(jp(run(["[info] window 60.0s: no speech, skipped (3/10)"])), { pct: 30, phase: null });
+assert.equal(pctx.progressPct(run(["[info] window 30.0s done in 9.1s"])), 20);
+console.log("ui progress tests: ok");
