@@ -155,6 +155,23 @@ h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
 .steps span.done{color:var(--ok)}.steps span.cur{color:var(--ink);font-weight:500}
 .proc .full{grid-column:1/-1}
 .proc .err{margin-top:0}
+/* --- cx: safe recording --- */
+.recwarn{margin:10px auto 0;max-width:420px;font-size:13.5px;line-height:1.45;color:var(--err)}
+.restore{margin:0 0 18px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px;text-align:left}
+.restore .rt{flex:1 1 220px;color:var(--ink-2);line-height:1.4}
+.restore .btn{height:32px;padding:0 12px;font-size:13px}
+@media (max-width:640px){.restore .btn{height:40px;padding:0 14px;font-size:14px}}
+/* --- cx: safe recording end --- */
+/* --- cx: queue --- */
+.proc .jobctl{grid-column:1/-1;display:flex;justify-content:flex-end;margin-top:-2px}
+.proc .jobctl .btn,.q-row .btn{height:30px;padding:0 12px;font-size:13px}
+.queue{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.q-head{margin:6px 2px 0}
+.q-row{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface)}
+.q-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.q-st{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q-row.failed .q-st{color:var(--err)}
+/* --- cx: queue end --- */
 .conn{display:inline-flex;align-items:center;gap:6px}
 .conn::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ink-3);animation:blink 1s steps(2) infinite}
 /* result */
@@ -349,6 +366,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
 
 <div class="stage">
   <div class="recorder">
+    <div class="restore hidden" id="recRestore"></div>
     <div class="rtop" id="modelBox">
       <div class="rlabel" id="modelLbl">Modell</div>
       <!-- rendered from /api/info.picker (Snabb, Standard, Large); tiny/base/medium still work via CLI/API -->
@@ -376,6 +394,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
     <canvas class="wave" id="wave" aria-hidden="true"></canvas>
     <div class="meter hidden" id="meter" aria-hidden="true"><div id="level"></div></div>
     <div class="err hidden" id="recErr" role="alert"></div>
+    <div class="recwarn hidden" id="recWarn" role="status" aria-live="polite"></div>
 
     <button type="button" class="uplink" id="uplink">eller <u>välj en ljudfil</u></button>
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="Välj en ljudfil eller dra och släpp den här">
@@ -385,7 +404,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
         <div class="dtext hidden" id="dropFile"><div class="fname" id="fname"></div><small id="fsize"></small></div>
       </div>
       <button type="button" class="btn primary hidden" id="go">Transkribera</button>
-      <input type="file" id="file" accept="audio/*,video/*,.m4a,.oga,.ogg,.opus,.flac,.webm" hidden>
+      <input type="file" id="file" accept="audio/*,video/*,.m4a,.oga,.ogg,.opus,.flac,.webm" multiple hidden>
     </div>
 
     <form class="linkform" id="linkForm" autocomplete="off" novalidate>
@@ -411,9 +430,11 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
     <div class="steps" id="steps"></div>
     <div class="meta full hidden" id="jobHint"></div>
     <div class="meta full hidden" id="conn"><span class="conn">Tappade kontakt med servern, försöker igen …</span></div>
+    <div class="jobctl hidden" id="jobCtl"><button type="button" class="btn" id="jobCancel">Avbryt</button></div>
     <div class="full hidden" id="errBox"><div class="err" id="err" role="alert"></div>
-      <div style="margin-top:12px"><button type="button" class="btn" id="retry">Försök igen</button></div></div>
+      <div style="margin-top:12px"><button type="button" class="btn" id="retry">Försök igen</button> <button type="button" class="btn" id="jobDel">Ta bort</button></div></div>
   </div>
+  <div class="queue hidden" id="jobQueue" aria-live="polite"></div>
 </section>
 
 <section id="recentSec" class="hidden" aria-labelledby="recentH">
@@ -668,6 +689,7 @@ const drop = $("drop");
 drop.onclick = e => { if (e.target.closest("#go")) return; $("file").click(); };
 drop.onkeydown = e => { if ((e.key === "Enter" || e.key === " ") && e.target === drop) { e.preventDefault(); $("file").click(); } };
 $("file").onchange = e => {
+  if (e.target.files.length > 1) { const fs = [...e.target.files]; delete e.target.dataset.direct; e.target.value = ""; cxStartFiles(fs); return; }   // cx: queue
   const f = e.target.files[0], direct = e.target.dataset.direct === "1";
   delete e.target.dataset.direct; e.target.value = "";
   if (!f) return;
@@ -675,7 +697,7 @@ $("file").onchange = e => {
 };
 ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); if (!drop.classList.contains("is-off")) drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => { if (!drop.classList.contains("is-off") && e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
+drop.addEventListener("drop", e => { if (!drop.classList.contains("is-off") && e.dataTransfer.files.length > 1) cxStartFiles([...e.dataTransfer.files]); else if (!drop.classList.contains("is-off") && e.dataTransfer.files[0]) pick(e.dataTransfer.files[0]); });
 $("go").onclick = e => { e.stopPropagation(); if (file && !busy) { const f = file; pick(null); $("recTime").textContent = "00:00"; startJob(f, f.name); } };
 // phone layout: a plain link instead of the drop zone; the file is sent right away
 $("uplink").onclick = () => { if (!busy) { $("file").dataset.direct = "1"; $("file").click(); } };
@@ -768,7 +790,7 @@ async function startJob(blob, filename) {
   busy = true; lastMedia = { blob, filename }; curPct = null; modelPhase = null; hintFor(null); jobIsLink = false; lastLink = null;
   setRecState("processing");
   go("#/");
-  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
+  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done", "hidden");
   $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
   $("statusText").textContent = STATUS.uploading; $("procFile").textContent = filename;
   $("elapsed").textContent = modelLabel($("model").value); setSteps("uploading"); setBar(null);
@@ -778,6 +800,7 @@ async function startJob(blob, filename) {
     let j = {}; try { j = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(j.error || r.status + " " + r.statusText);
     jobId = j.id; localBlobs.set(j.id, blob);
+    cxRecUploaded(blob);   // cx: safe recording – the server has it now
     try { localStorage.setItem("prata.job", j.id); } catch (_) {}
     poll(); timer = setInterval(poll, 1500);
   } catch (e) { jobFailed("Uppladdningen misslyckades.", "Kontrollera att Prata fortfarande körs och försök igen."); }
@@ -861,7 +884,7 @@ async function startUrlJob(url) {
   busy = true; lastLink = url; lastMedia = null; curPct = null; modelPhase = null; hintFor(null); jobIsLink = true;
   setRecState("processing", "Laddar ner …");
   go("#/");
-  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done");
+  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done", "hidden");
   $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
   let host = url; try { host = new URL(url).hostname; } catch (_) {}
   $("statusText").textContent = STATUS.downloading; $("procFile").textContent = host;
@@ -895,6 +918,7 @@ async function poll() {
   $("conn").classList.add("hidden");
   if (j.status === "error") {
     if (j.source_url) jobIsLink = true;
+    if (j.cancelled) { jobFailed("Avbruten.", "Tryck Försök igen för att köra om."); $("statusText").textContent = "Avbruten"; return; }   // cx: queue
     return jobFailed(j.source_url ? "Länken kunde inte transkriberas." : "Transkriberingen misslyckades.", j.error_user || humanError(j.error));
   }
   if (j.source_url) jobIsLink = true;
@@ -917,12 +941,155 @@ async function poll() {
     flashDone();
     hideProcT = setTimeout(() => { if (!busy) $("statusSec").classList.add("hidden"); }, 1200);
     if (jobIsLink) { $("linkInput").value = ""; syncPaste(); }
+    if (cxQAdopt()) { refreshNotes(); return; }   // cx: queue – more files waiting: stay here
     await refreshNotes();
     if (j.note_id) go("#/notes/" + j.note_id);           // lands in Notes and opens
     else { lastJob = j; showJobResult(j); }
   }
 }
 function flashDone() { const b = $("rec"); b.classList.add("flash"); setTimeout(() => b.classList.remove("flash"), 600); }
+
+// --- cx: queue ---
+// Several files at once: the first one uses the progress card, the rest wait in a small list
+// below it (ids in localStorage "prata.queue", so a reload keeps them). The server runs one
+// job at a time. Cancel, retry and delete use /api/jobs/{id}/cancel|retry and DELETE.
+let cxQ = [];   // [{id|null, name, status, error_user, retryable, file?}]
+const cxQStatus = { uploading: "Laddar upp …", downloading: "Laddar ner …", queued: "I kö", converting: "Konverterar …", running: "Transkriberar …" };
+function cxQSave() { try { localStorage.setItem("prata.queue", JSON.stringify(cxQ.filter(x => x.id).map(x => x.id))); } catch (_) {} }
+function cxQRender() {
+  const el = $("jobQueue");
+  el.classList.toggle("hidden", !cxQ.length);
+  if (!cxQ.length) { el.innerHTML = ""; return; }
+  const waiting = cxQ.filter(x => x.status !== "error").length;
+  el.innerHTML = `<div class="meta q-head">${waiting ? "Väntar på tur (" + waiting + ")" : "Kvar i kön"}</div>` + cxQ.map((x, i) => {
+    const failed = x.status === "error";
+    const st = failed ? (x.error_user || "Misslyckades") : (cxQStatus[x.status] || x.status || "");
+    const btns = failed
+      ? (x.retryable || x.file ? `<button type="button" class="btn" data-q="retry" data-i="${i}">Försök igen</button>` : "") + `<button type="button" class="btn" data-q="del" data-i="${i}">Ta bort</button>`
+      : (x.id ? `<button type="button" class="btn" data-q="del" data-i="${i}" aria-label="Ta bort ${esc(x.name || "")} ur kön">Ta bort</button>` : "");
+    return `<div class="q-row${failed ? " failed" : ""}"><span class="q-name">${esc(x.name || x.filename || "")}</span><span class="meta q-st">${esc(st)}</span>${btns}</div>`;
+  }).join("");
+}
+async function cxUpload(f) {   // -> job id (throws on failure)
+  const fd = new FormData(); fd.append("model", $("model").value); fd.append("file", f, f.name);
+  const r = await fetch("/api/jobs", { method: "POST", body: fd });
+  let j = {}; try { j = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j.id;
+}
+async function cxEnqueue(files) {
+  const items = files.map(f => ({ id: null, name: f.name, status: "uploading", file: f }));
+  cxQ.push(...items); cxQRender();
+  for (const it of items) {   // one upload at a time keeps the server's order = the list's order
+    if (!cxQ.includes(it)) continue;   // removed while waiting
+    try { it.id = await cxUpload(it.file); it.status = "queued"; delete it.file; }
+    catch (_) { it.status = "error"; it.error_user = "Uppladdningen misslyckades."; }
+    cxQSave(); cxQRender();
+  }
+}
+async function cxStartFiles(files) {
+  files = files.filter(f => f && f.size);
+  if (!files.length) return;
+  pick(null);
+  if (busy) return cxEnqueue(files);
+  const [first, ...rest] = files;
+  await startJob(first, first.name);   // resolves once the first upload is accepted
+  if (rest.length) cxEnqueue(rest);
+}
+function cxAdopt(id, name) {   // show an existing server job in the progress card
+  clearInterval(timer); clearTimeout(hideProcT);
+  jobId = id; busy = true; jobIsLink = false; lastMedia = null; lastLink = null; curPct = null; modelPhase = null;
+  setRecState("processing"); go("#/");
+  $("statusSec").classList.remove("hidden"); $("statusCard").classList.remove("failed", "done", "hidden");
+  $("errBox").classList.add("hidden"); $("conn").classList.add("hidden"); $("spin").classList.remove("hidden");
+  $("statusText").textContent = STATUS.queued; $("procFile").textContent = name || ""; setSteps("queued"); setBar(null);
+  try { localStorage.setItem("prata.job", id); } catch (_) {}
+  poll(); timer = setInterval(poll, 1500);
+}
+// next waiting job into the card (after the card's job finished or failed); a failed card job
+// moves into the list so its Försök igen / Ta bort stay reachable
+function cxQAdopt() {
+  if (busy || (rec && rec.state === "recording")) return false;
+  const next = cxQ.find(x => x.id && x.status !== "error");
+  if (!next) return false;
+  if ($("statusCard").classList.contains("failed") && jobId && !cxQ.some(x => x.id === jobId))
+    cxQ.unshift({ id: jobId, name: $("procFile").textContent.split(" · ")[0], status: "error", error_user: $("err").textContent.replace(/^[^.]*\.\s*/, "") || "Misslyckades", retryable: true });
+  cxQ.splice(cxQ.indexOf(next), 1); cxQSave(); cxQRender();
+  cxAdopt(next.id, next.name || next.filename);
+  return true;
+}
+async function cxQRefresh() {
+  const ids = cxQ.filter(x => x.id).map(x => x.id);
+  if (ids.length) {
+    let list;
+    try { const r = await fetch("/api/jobs?ids=" + ids.join(",")); if (!r.ok) return; list = await r.json(); } catch (_) { return; }
+    const by = new Map(list.map(j => [j.id, j]));
+    let done = false;
+    cxQ = cxQ.filter(x => {
+      if (!x.id) return true;
+      const j = by.get(x.id);
+      if (!j) return false;   // forgotten by the server
+      if (j.status === "done") { done = true; return false; }
+      Object.assign(x, { status: j.status, error_user: j.error_user, retryable: j.retryable, filename: j.filename });
+      return true;
+    });
+    if (done) refreshNotes();
+    cxQSave();
+  }
+  cxQAdopt(); cxQRender();
+}
+async function cxQAction(act, x) {
+  if (act === "del") {
+    cxQ.splice(cxQ.indexOf(x), 1); cxQSave(); cxQRender();
+    if (x.id) fetch("/api/jobs/" + x.id, { method: "DELETE" }).catch(() => {});
+    return;
+  }
+  if (x.file && !x.id) { cxQ.splice(cxQ.indexOf(x), 1); return cxEnqueue([x.file]); }   // upload failed: send again
+  try { const r = await fetch("/api/jobs/" + x.id + "/retry", { method: "POST" }); if (!r.ok) throw new Error(r.status); x.status = "queued"; x.error_user = null; }
+  catch (_) { x.retryable = false; x.error_user = "Kan inte köras om – ladda upp filen igen."; }
+  cxQSave(); cxQRender(); cxQAdopt();
+}
+$("jobQueue").addEventListener("click", e => {
+  const b = e.target.closest("button[data-q]"); if (!b) return;
+  const x = cxQ[+b.dataset.i]; if (x) cxQAction(b.dataset.q, x);
+});
+function cxCardJob() { try { const id = localStorage.getItem("prata.job"); return id && id === jobId ? id : null; } catch (_) { return null; } }
+function cxCtl() {   // "Avbryt" while the card's job is on the server and not finished
+  $("jobCtl").classList.toggle("hidden", !(busy && cxCardJob() && !$("statusSec").classList.contains("hidden")));
+}
+$("jobCancel").onclick = async () => {
+  const id = cxCardJob(); if (!id) return;
+  $("jobCancel").disabled = true;
+  try { await fetch("/api/jobs/" + id + "/cancel", { method: "POST" }); } catch (_) {}
+  $("jobCancel").disabled = false;
+  poll();
+};
+const cxRetryOld = $("retry").onclick;
+$("retry").onclick = async () => {   // retry on the server (same job, keeps the upload); else upload again
+  if (busy) return;
+  const id = jobId;
+  if (id && !lastLink) {
+    try {
+      const r = await fetch("/api/jobs/" + id + "/retry", { method: "POST" });
+      if (r.ok) return cxAdopt(id, $("procFile").textContent.split(" · ")[0]);
+    } catch (_) {}
+  }
+  if (cxRetryOld) cxRetryOld();
+};
+$("jobDel").onclick = () => {   // forget the failed job (and its kept upload) on the server
+  const id = jobId;
+  if (id) fetch("/api/jobs/" + id, { method: "DELETE" }).catch(() => {});
+  jobId = null; lastMedia = null; lastLink = null;
+  try { localStorage.removeItem("prata.job"); } catch (_) {}
+  if (cxQAdopt()) return;
+  $("statusCard").classList.add("hidden"); $("statusSec").classList.toggle("hidden", !cxQ.length);
+};
+function cxQInit() {
+  try { cxQ = JSON.parse(localStorage.getItem("prata.queue") || "[]").filter(id => typeof id === "string").map(id => ({ id, status: "queued" })); } catch (_) { cxQ = []; }
+  if (cxQ.length) { $("statusSec").classList.remove("hidden"); cxQRender(); cxQRefresh(); }
+  setInterval(() => { cxCtl(); if (cxQ.length) cxQRefresh(); }, 1500);
+}
+// --- cx: queue end ---
 
 // ------------------------------------------------------------ result / transcript
 let segData = [], activeIdx = -1, markEls = [], markIdx = -1;
@@ -1264,17 +1431,19 @@ async function startRecording() {
   try { rec = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream); }
   catch (e) { releaseMic(); return recError("Inspelning stöds inte i den här webbläsaren.", e.message); }
   recChunks = [];
-  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.ondataavailable = e => { if (e.data && e.data.size) { recChunks.push(e.data); cxRecChunk(e.data); } };
   rec.onerror = e => { releaseMic(); setRecState("idle"); recError("Inspelningsfel.", (e.error && e.error.message) || "okänt fel"); };
   rec.onstop = () => {
     const type = rec.mimeType || mime || (recChunks[0] && recChunks[0].type) || "audio/webm";
     releaseMic(); rec = null;
     const blob = new Blob(recChunks, { type });
+    cxRecStop(blob);   // cx: safe recording
     if (!blob.size) { setRecState("idle"); return recError("Inspelningen blev tom.", "Inget ljud fångades – kontrollera mikrofonen."); }
     const name = `inspelning-${stamp()}.${extFor(type)}`;
     startJob(blob, name);
   };
   rec.start(1000);
+  cxRecStart(rec.mimeType || mime);   // cx: safe recording
   recStart = Date.now(); $("recTime").textContent = "00:00";
   recTick = setInterval(() => {
     const el = (Date.now() - recStart) / 1000;
@@ -1294,6 +1463,149 @@ document.addEventListener("keydown", e => {   // Space toggles recording when fo
   if ($("rec").disabled) return;
   e.preventDefault(); $("rec").click();
 });
+
+// --- cx: safe recording ---
+// Each 1 s MediaRecorder chunk is also written to IndexedDB ("prata-rec"), so a crash, reload or
+// closed tab doesn't lose the recording: the next visit offers "Återställ inspelning". Cleared as
+// soon as the upload is accepted. Also: Wake Lock while recording, a beforeunload guard, and a mic
+// watchdog (no sound, no new data, muted/ended track, gap while the screen was locked).
+let cxR = null, cxWakeLock = null, cxDbP = null;
+const cxRecOf = new WeakMap(), cxWrites = new Map();   // blob -> recording id; id -> pending writes
+function cxDb() {
+  if (!cxDbP) {
+    cxDbP = new Promise((res, rej) => {
+      if (!window.indexedDB) return rej(new Error("no IndexedDB"));
+      const r = indexedDB.open("prata-rec", 1);
+      r.onupgradeneeded = () => { const db = r.result; db.createObjectStore("recs", { keyPath: "id" }); db.createObjectStore("chunks", { keyPath: ["rec", "seq"] }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    cxDbP.catch(() => {});
+  }
+  return cxDbP;
+}
+function cxIdb(stores, mode, fn) {   // fn(tx) in one transaction -> promise of the last request's result
+  return cxDb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(stores, mode); let req;
+    try { req = fn(tx); } catch (e) { return rej(e); }
+    tx.oncomplete = () => res(req && "result" in req ? req.result : undefined);
+    tx.onerror = tx.onabort = () => rej(tx.error);
+  }));
+}
+const cxRange = id => IDBKeyRange.bound([id, 0], [id, Infinity]);
+function cxQueueWrite(id, fn) { const p = (cxWrites.get(id) || Promise.resolve()).then(fn).catch(() => {}); cxWrites.set(id, p); return p; }
+function cxRecStart(mime) {
+  const now = Date.now(), r = cxR = { id: "r" + now, mime: mime || "", started: now, seq: 0, bytes: 0, lastChunk: now, lastSound: now, lostMs: 0, mutedAt: 0, hiddenAt: 0, lostAtHide: 0 };
+  cxQueueWrite(r.id, () => cxIdb(["recs"], "readwrite", tx => tx.objectStore("recs").put({ id: r.id, mime: r.mime, started: now, last: now, bytes: 0 })));
+  cxWake();
+  const tr = recStream && recStream.getAudioTracks()[0];
+  if (tr) {
+    tr.addEventListener("mute", () => { if (cxR === r) r.mutedAt = Date.now(); });
+    tr.addEventListener("unmute", () => { if (cxR === r && r.mutedAt) { r.lostMs += Date.now() - r.mutedAt; r.mutedAt = 0; } });
+  }
+  r.tick = setInterval(cxWatch, 1000);
+}
+function cxRecChunk(data) {
+  const r = cxR; if (!r) return;
+  const seq = r.seq++; r.bytes += data.size; r.lastChunk = Date.now();
+  const meta = { id: r.id, mime: r.mime || data.type, started: r.started, last: r.lastChunk, bytes: r.bytes };
+  cxQueueWrite(r.id, () => data.arrayBuffer().then(buf => cxIdb(["chunks", "recs"], "readwrite", tx => {   // ArrayBuffer: safest across Safari versions
+    tx.objectStore("chunks").put({ rec: r.id, seq, buf, type: data.type }); return tx.objectStore("recs").put(meta);
+  })));
+}
+function cxRecStop(blob) {   // the recorder stopped; IndexedDB is kept until the upload is accepted
+  const r = cxR; cxR = null; if (!r) return;
+  clearInterval(r.tick); cxWarn(""); cxWakeRelease();
+  if (blob && blob.size) cxRecOf.set(blob, r.id); else cxRecDrop(r.id);
+}
+function cxRecUploaded(blob) {
+  const id = blob && cxRecOf.get(blob);
+  if (id) { cxRecOf.delete(blob); cxRecDrop(id).then(cxRecCheck); }
+}
+function cxRecDrop(id) {
+  return cxQueueWrite(id, () => cxIdb(["chunks", "recs"], "readwrite", tx => { tx.objectStore("chunks").delete(cxRange(id)); return tx.objectStore("recs").delete(id); }))
+    .then(() => { if (cxWrites.get(id)) cxWrites.delete(id); });
+}
+function cxStamp(ms) { const d = new Date(ms); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
+async function cxRecBlob(id) {
+  const meta = await cxIdb(["recs"], "readonly", tx => tx.objectStore("recs").get(id));
+  const chunks = (await cxIdb(["chunks"], "readonly", tx => tx.objectStore("chunks").getAll(cxRange(id)))) || [];
+  chunks.sort((a, b) => a.seq - b.seq);
+  const type = (meta && meta.mime) || (chunks[0] && chunks[0].type) || "audio/webm";
+  return { blob: new Blob(chunks.map(c => c.buf), { type }), name: `inspelning-${cxStamp(meta ? meta.started : Date.now())}.${extFor(type)}` };
+}
+async function cxRecCheck() {   // an earlier recording that never reached the server?
+  let recs;
+  try { recs = (await cxIdb(["recs"], "readonly", tx => tx.objectStore("recs").getAll())) || []; } catch (_) { return; }
+  const mine = cxR && cxR.id, pending = new Set();
+  for (const id of cxWrites.keys()) pending.add(id);
+  recs = recs.filter(x => x.id !== mine && !pending.has(x.id));
+  for (const x of recs.filter(x => !x.bytes)) cxRecDrop(x.id);   // empty leftovers
+  recs = recs.filter(x => x.bytes).sort((a, b) => b.started - a.started);
+  const el = $("recRestore");
+  if (!recs.length) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const x = recs[0], secs = Math.max(1, Math.round((x.last - x.started) / 1000));
+  el.dataset.id = x.id;
+  el.innerHTML = `<span class="rt">En inspelning från ${esc(fmtDate(x.started / 1000))} (${fmtShort(secs)}) skickades aldrig.</span>` +
+    `<button type="button" class="btn primary" data-r="restore">Återställ inspelning</button><button type="button" class="btn" data-r="save">Ladda ner</button><button type="button" class="btn" data-r="drop">Släng</button>`;
+  el.classList.remove("hidden");
+}
+$("recRestore").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-r]"), el = $("recRestore"), id = el.dataset.id;
+  if (!b || !id) return;
+  if (b.dataset.r === "drop") {
+    if (!confirm("Slänga inspelningen? Den går inte att få tillbaka.")) return;
+    await cxRecDrop(id); return cxRecCheck();
+  }
+  let r; try { r = await cxRecBlob(id); } catch (_) { return recError("Inspelningen kunde inte läsas.", "Webbläsarens lagring svarade inte. Försök igen."); }
+  if (!r.blob.size) { await cxRecDrop(id); return cxRecCheck(); }
+  if (b.dataset.r === "save") {
+    const a = document.createElement("a"), u = URL.createObjectURL(r.blob);
+    a.href = u; a.download = r.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 10000); return;
+  }
+  if (busy || (rec && rec.state === "recording")) return;
+  cxRecOf.set(r.blob, id); el.classList.add("hidden");
+  startJob(r.blob, r.name);   // cleared from IndexedDB once the upload is accepted
+});
+async function cxWake() { try { if (navigator.wakeLock && !document.hidden) { cxWakeLock = await navigator.wakeLock.request("screen"); if (!cxR) cxWakeRelease(); } } catch (_) {} }
+function cxWakeRelease() { if (cxWakeLock) { cxWakeLock.release().catch(() => {}); cxWakeLock = null; } }
+function cxWarn(t) { const w = $("recWarn"); if (w.textContent !== t) w.textContent = t; w.classList.toggle("hidden", !t); }
+// --- recwatch:start (pure; unit-tested in scripts/test-ui.mjs)
+// Watchdog text for the recording screen ("" = all good). s: {now, lastChunk, lastSound, lostMs, muted, ended} (ms)
+function recWatchMsg(s) {
+  if (s.ended) return "Mikrofonen kopplades bort. Tryck Stoppa för att spara det som spelats in.";
+  if (s.muted) return "Mikrofonen är pausad av systemet – inget ljud spelas in just nu.";
+  if (s.now - s.lastChunk > 5000) return `Inspelningen verkar ha stannat – inga nya ljuddata på ${Math.round((s.now - s.lastChunk) / 1000)} s.`;
+  if (s.now - s.lastSound > 10000) return `Hör inget – är mikrofonen på? Inget ljud på ${Math.round((s.now - s.lastSound) / 1000)} s.`;
+  if (s.lostMs > 1500) return `Inspelningen pausades när skärmen låstes – ca ${Math.round(s.lostMs / 1000)} s saknas.`;
+  return "";
+}
+// Audio lost while the page was hidden: no chunk for > 3 s → the time since the last chunk (or since hiding).
+function recGapMs(now, lastChunk, hiddenAt) { return now - lastChunk > 3000 ? now - Math.max(lastChunk, hiddenAt) : 0; }
+// --- recwatch:end
+function cxWatch() {
+  const r = cxR; if (!r || !rec || rec.state !== "recording" || document.hidden) return;
+  const now = Date.now(), lvl = hist.length ? hist[hist.length - 1] : null, tr = recStream && recStream.getAudioTracks()[0];
+  if (lvl == null || lvl > 0.003) r.lastSound = now;
+  cxWarn(recWatchMsg({ now, lastChunk: r.lastChunk, lastSound: r.lastSound, lostMs: r.lostMs, muted: !!(r.mutedAt || (tr && tr.muted)), ended: !!(tr && tr.readyState === "ended") }));
+}
+document.addEventListener("visibilitychange", () => {
+  const r = cxR; if (!r) return;
+  const now = Date.now();
+  if (document.hidden) { r.hiddenAt = now; r.lostAtHide = r.lostMs; return; }
+  if (r.hiddenAt) {   // back: no data while hidden (iOS stops the mic when the screen locks)
+    const gap = recGapMs(now, r.lastChunk, r.hiddenAt);
+    r.lostMs = r.lostAtHide + Math.max(r.lostMs - r.lostAtHide, gap); r.hiddenAt = 0;
+  }
+  r.lastSound = now; r.lastChunk = Math.max(r.lastChunk, now - 1000);
+  cxWake(); cxWatch();
+});
+window.addEventListener("beforeunload", e => {
+  const recording = rec && rec.state === "recording";
+  const uploading = (busy && !jobIsLink && !cxCardJob()) || cxQ.some(x => x.status === "uploading");
+  if (recording || uploading) { e.preventDefault(); e.returnValue = ""; }
+});
+// --- cx: safe recording end ---
 
 // ------------------------------------------------------------ notes: list, search, open, rename, delete
 let notesCache = [], notesTotal = 0, searchT = null, listToken = 0;
@@ -1558,6 +1870,8 @@ try {
     poll(); timer = setInterval(poll, 1500);
   }
 } catch (_) {}
+cxQInit();   // cx: queue
+cxRecCheck();   // cx: safe recording
 </script>
 </body>
 </html>

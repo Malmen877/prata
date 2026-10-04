@@ -35,7 +35,7 @@ use tower::ServiceExt;
 use tokio::{
     io::{AsyncReadExt, BufReader},
     process::Command,
-    sync::{Mutex, Semaphore},
+    sync::{watch, Mutex, Semaphore},
 };
 
 const INDEX_HTML: &str = include_str!("index.html");
@@ -636,10 +636,17 @@ struct Job {
     model_download_file: Option<String>,
     /// Error message meant to be shown as is (Swedish)
     error_user: Option<String>,
+    /// Stopped by the user (status "error"); can be retried
+    cancelled: bool,
+    /// `POST /api/jobs/{id}/retry` will work (failed, and the input or link is still there)
+    retryable: bool,
     #[serde(skip)]
     started: Option<Instant>,
     #[serde(skip)]
     max_duration: Option<f64>,
+    /// The uploaded file in work_dir; kept after a failure so the job can be retried
+    #[serde(skip)]
+    input: Option<PathBuf>,
 }
 
 impl Job {
@@ -670,15 +677,168 @@ impl Job {
             error_user: None,
             started: None,
             max_duration: None,
+            cancelled: false,
+            retryable: false,
+            input: None,
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        !matches!(self.status.as_str(), "done" | "error")
+    }
+
+    fn can_retry(&self) -> bool {
+        self.status == "error" && (self.source_url.is_some() || self.input.as_deref().is_some_and(|p| p.exists()))
+    }
+}
+
+// --- cx: queue control ---
+// Jobs live in memory; a small record per job in <work_dir>/jobs/<id>.json survives a restart
+// so the startup sweep can mark orphaned (queued/running) jobs as failed and retryable.
+
+const JOB_INTERRUPTED: &str = "Avbröts när Prata startades om. Tryck Försök igen.";
+const JOB_CANCELLED: &str = "Avbruten";
+const JOB_KEEP_DAYS: u64 = 7;
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+struct JobRec {
+    id: String,
+    filename: String,
+    model: String,
+    status: String,
+    created: u64,
+    source_url: Option<String>,
+    media_title: Option<String>,
+    input: Option<PathBuf>,
+    error: Option<String>,
+    error_user: Option<String>,
+    cancelled: bool,
+    max_duration: Option<f64>,
+}
+
+fn jobs_dir(work_dir: &Path) -> PathBuf {
+    work_dir.join("jobs")
+}
+
+/// Write (or, for finished or deleted jobs, remove) the job's restart record.
+async fn persist_job(st: &St, id: &str) {
+    let rec = st.jobs.lock().await.get(id).map(|j| JobRec {
+        id: j.id.clone(),
+        filename: j.filename.clone(),
+        model: j.model.clone(),
+        status: j.status.clone(),
+        created: j.created,
+        source_url: j.source_url.clone(),
+        media_title: j.media_title.clone(),
+        input: j.input.clone(),
+        error: j.error.clone(),
+        error_user: j.error_user.clone(),
+        cancelled: j.cancelled,
+        max_duration: j.max_duration,
+    });
+    let dir = jobs_dir(&st.cfg.work_dir);
+    let path = dir.join(format!("{id}.json"));
+    match rec {
+        Some(r) if r.status != "done" => {
+            let _ = std::fs::create_dir_all(&dir);
+            if let Ok(b) = serde_json::to_vec(&r) {
+                let tmp = path.with_extension("json.tmp");
+                if std::fs::write(&tmp, b).is_ok() {
+                    let _ = std::fs::rename(&tmp, &path);
+                }
+            }
+        }
+        _ => {
+            let _ = std::fs::remove_file(&path);
         }
     }
 }
+
+/// Startup sweep: jobs that were queued or running when the server stopped are marked as
+/// failed (retryable); records older than JOB_KEEP_DAYS are dropped with their input file;
+/// stray conversion files and download folders are removed.
+fn sweep_jobs(work_dir: &Path, now: u64) -> Vec<Job> {
+    let mut out = vec![];
+    if let Ok(rd) = std::fs::read_dir(work_dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let p = e.path();
+            if name.ends_with(".16k.wav") || name.ends_with(".prata.json") {
+                let _ = std::fs::remove_file(&p);
+            } else if name.ends_with("-dl") && p.is_dir() {
+                let _ = std::fs::remove_dir_all(&p);
+            }
+        }
+    }
+    let dir = jobs_dir(work_dir);
+    let Ok(rd) = std::fs::read_dir(&dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("json") {
+            let _ = std::fs::remove_file(&p);
+            continue;
+        }
+        let rec = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<JobRec>(&b).ok());
+        let Some(mut rec) = rec.filter(|r| !r.id.is_empty()) else {
+            let _ = std::fs::remove_file(&p);
+            continue;
+        };
+        // only files directly inside work_dir are ever deleted or reused
+        rec.input = rec.input.filter(|i| i.parent() == Some(work_dir));
+        if rec.status == "done" || now.saturating_sub(rec.created) > JOB_KEEP_DAYS * 86400 {
+            if let Some(i) = &rec.input {
+                let _ = std::fs::remove_file(i);
+            }
+            let _ = std::fs::remove_file(&p);
+            continue;
+        }
+        if rec.status != "error" {
+            eprintln!("[job {}] was {} when the server stopped: marked as failed", rec.id, rec.status);
+            rec.status = "error".into();
+            rec.error = Some("avbröts: servern startades om".into());
+            rec.error_user = Some(JOB_INTERRUPTED.into());
+            if let Ok(b) = serde_json::to_vec(&rec) {
+                let _ = std::fs::write(&p, b);
+            }
+        }
+        let mut j = Job::new(&rec.id, &rec.filename, &rec.model, "error", "Fel");
+        j.created = rec.created;
+        j.source_url = rec.source_url;
+        j.media_title = rec.media_title;
+        j.input = rec.input;
+        j.error = rec.error;
+        j.error_user = rec.error_user;
+        j.cancelled = rec.cancelled;
+        j.max_duration = rec.max_duration;
+        out.push(j);
+    }
+    out.sort_by_key(|j| j.created);
+    out
+}
+
+/// Register a cancel switch for a job (replaces an old one).
+fn cancel_rx(st: &St, id: &str) -> watch::Receiver<bool> {
+    let (tx, rx) = watch::channel(false);
+    st.cancels.lock().unwrap().insert(id.to_string(), tx);
+    rx
+}
+
+/// Resolves when the job is cancelled; never if its switch was removed (job past the point of no return).
+async fn cancelled(mut rx: watch::Receiver<bool>) {
+    if rx.wait_for(|v| *v).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+// --- cx: queue control end ---
 
 struct AppState {
     cfg: Config,
     prata: Mutex<PrataInfo>,
     jobs: Mutex<HashMap<String, Job>>,
     gate: Semaphore, // one transcription at a time (memory!)
+    /// Cancel switches of queued/running jobs (removed once a job can no longer be stopped)
+    cancels: std::sync::Mutex<HashMap<String, watch::Sender<bool>>>,
     notes: Store,
     ytdlp: Mutex<Option<fetch::YtDlp>>,
     net: fetch::NetPolicy,
@@ -698,11 +858,15 @@ async fn update(st: &St, id: &str, f: impl FnOnce(&mut Job)) {
 }
 
 async fn ffmpeg_to_wav(input: &Path, out: &Path) -> Result<()> {
+    // `-map 0:a:0`: always the first audio stream. Voice Memos with Spatial Audio (APAC) and
+    // some video files carry several audio streams; ffmpeg's default pick is the "best" one
+    // (most channels), which is not necessarily the recording itself.
     let o = Command::new("ffmpeg")
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(input)
-        .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
+        .args(["-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
         .arg(out)
+        .kill_on_drop(true) // a cancelled job stops ffmpeg too
         .output()
         .await
         .context("kunde inte starta ffmpeg (är det installerat?)")?;
@@ -844,106 +1008,26 @@ async fn run_python(st: &St, id: &str, wav: &Path, model: &str, dur: f64) -> Res
     Ok(parse_output(&stdout, dur))
 }
 
-async fn process_job(st: St, id: String, input: PathBuf, model: String) {
-    let res: Result<()> = async {
-        let _permit = st.gate.acquire().await?;
-        update(&st, &id, |j| {
-            j.status = "converting".into();
-            j.progress = "Konverterar ljud med ffmpeg (16 kHz mono WAV) …".into();
-            j.started = Some(Instant::now());
-        })
-        .await;
-        let wav = input.with_extension("16k.wav");
-        ffmpeg_to_wav(&input, &wav).await?;
-        let dur = wav_duration(&wav).await;
-        update(&st, &id, |j| j.audio_duration = Some(dur)).await;
-        let max_dur = st.jobs.lock().await.get(&id).and_then(|j| j.max_duration);
-        if let Some(max) = max_dur {
-            if dur > max + 1.0 {
-                let _ = tokio::fs::remove_file(&wav).await;
-                return Err(fetch::FetchError::TooLong { max_s: max as u64 }.into());
-            }
+async fn process_job(st: St, id: String, input: PathBuf, model: String, cancel: watch::Receiver<bool>) {
+    let wav = input.with_extension("16k.wav");
+    let res = tokio::select! {
+        r = transcribe_job(&st, &id, &input, &wav, &model) => Some(r),
+        _ = cancelled(cancel) => None,
+    };
+    st.cancels.lock().unwrap().remove(&id);
+    let _ = tokio::fs::remove_file(&wav).await;
+    let _ = tokio::fs::remove_file(wav.with_extension("prata.json")).await;
+    let is_link = st.jobs.lock().await.get(&id).is_some_and(|j| j.source_url.is_some());
+    let Some(res) = res else {
+        // cancelled: the child processes were killed when the work future was dropped
+        eprintln!("[job {id}] cancelled");
+        if is_link {
+            let _ = tokio::fs::remove_file(&input).await;
         }
-
-        let want = st.cfg.backend.as_str();
-        let prata_ok = st.prata.lock().await.works;
-        let snabb_ok = snabb_available(&*st.prata.lock().await);
-        let result = if is_snabb(&model) {
-            // Snabb only exists in the Rust CLI: no Python fallback.
-            if snabb_ok {
-                run_prata(&st, &id, &wav, &model, dur).await
-            } else {
-                Err(anyhow!(SnabbUnsupported))
-            }
-        } else { match want {
-            "prata" => run_prata(&st, &id, &wav, &model, dur).await,
-            "python" => run_python(&st, &id, &wav, &model, dur).await,
-            _ if prata_ok => match run_prata(&st, &id, &wav, &model, dur).await {
-                Ok(r) => Ok(r),
-                Err(e) => {
-                    let msg = format!("prata misslyckades, faller tillbaka på Python: {e}");
-                    eprintln!("[job {id}] {msg}");
-                    update(&st, &id, |j| j.log_tail.push(msg)).await;
-                    run_python(&st, &id, &wav, &model, dur).await.map(|(s, f)| (s, f))
-                }
-            },
-            _ => run_python(&st, &id, &wav, &model, dur).await,
-        } };
-        let (segs, fmt) = result?;
-        let text = to_txt(&segs, false);
-        let _ = tokio::fs::remove_file(&wav).await;
-        // Save as a note (keeps the original audio for playback).
-        let job = st.jobs.lock().await.get(&id).cloned();
-        let note_id = match job {
-            Some(j) => {
-                let created = j.created as i64;
-                let title = j
-                    .media_title
-                    .as_deref()
-                    .and_then(notes::clean_title)
-                    .unwrap_or_else(|| notes::default_title(created, &text));
-                let note = Note {
-                    id: id.clone(),
-                    title,
-                    source_url: j.source_url.clone(),
-                    created,
-                    model: j.model.clone(),
-                    audio_duration: dur,
-                    filename: j.filename.clone(),
-                    audio: None,
-                    audio_bytes: 0,
-                    backend: j.backend.clone(),
-                    segments: segs.clone(),
-                    ..Default::default()
-                };
-                let st2 = st.clone();
-                let input2 = input.clone();
-                match tokio::task::spawn_blocking(move || st2.notes.create(note, Some(&input2))).await {
-                    Ok(Ok(n)) => Some(n.id),
-                    Ok(Err(e)) => {
-                        eprintln!("[job {id}] could not save note: {e:#}");
-                        None
-                    }
-                    Err(e) => {
-                        eprintln!("[job {id}] could not save note: {e}");
-                        None
-                    }
-                }
-            }
-            None => None,
-        };
-        update(&st, &id, |j| {
-            j.segments = segs;
-            j.text = Some(text);
-            j.output_format = Some(fmt.into());
-            j.note_id = note_id;
-            j.status = "done".into();
-            j.progress = "Klar".into();
-        })
-        .await;
-        Ok(())
-    }
-    .await;
+        persist_job(&st, &id).await;
+        return;
+    };
+    let ok = res.is_ok();
     if let Err(e) = res {
         eprintln!("[job {id}] error: {e:#}");
         let user = e.downcast_ref::<fetch::FetchError>().map(|f| f.message()).or_else(|| {
@@ -967,7 +1051,112 @@ async fn process_job(st: St, id: String, input: PathBuf, model: String) {
             );
         }
     }
-    let _ = tokio::fs::remove_file(&input).await;
+    // keep an uploaded file after a failure so "Försök igen" works; links are fetched again
+    if ok || is_link {
+        let _ = tokio::fs::remove_file(&input).await;
+        update(&st, &id, |j| j.input = None).await;
+    }
+    persist_job(&st, &id).await;
+}
+
+async fn transcribe_job(st: &St, id: &str, input: &Path, wav: &Path, model: &str) -> Result<()> {
+        let _permit = st.gate.acquire().await?;
+        update(st, id, |j| {
+            j.status = "converting".into();
+            j.progress = "Konverterar ljud med ffmpeg (16 kHz mono WAV) …".into();
+            j.started = Some(Instant::now());
+        })
+        .await;
+        ffmpeg_to_wav(input, wav).await?;
+        let dur = wav_duration(wav).await;
+        update(st, id, |j| j.audio_duration = Some(dur)).await;
+        let max_dur = st.jobs.lock().await.get(id).and_then(|j| j.max_duration);
+        if let Some(max) = max_dur {
+            if dur > max + 1.0 {
+                let _ = tokio::fs::remove_file(wav).await;
+                return Err(fetch::FetchError::TooLong { max_s: max as u64 }.into());
+            }
+        }
+
+        let want = st.cfg.backend.as_str();
+        let prata_ok = st.prata.lock().await.works;
+        let snabb_ok = snabb_available(&*st.prata.lock().await);
+        let result = if is_snabb(model) {
+            // Snabb only exists in the Rust CLI: no Python fallback.
+            if snabb_ok {
+                run_prata(st, id, wav, model, dur).await
+            } else {
+                Err(anyhow!(SnabbUnsupported))
+            }
+        } else { match want {
+            "prata" => run_prata(st, id, wav, model, dur).await,
+            "python" => run_python(st, id, wav, model, dur).await,
+            _ if prata_ok => match run_prata(st, id, wav, model, dur).await {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                    let msg = format!("prata misslyckades, faller tillbaka på Python: {e}");
+                    eprintln!("[job {id}] {msg}");
+                    update(st, id, |j| j.log_tail.push(msg)).await;
+                    run_python(st, id, wav, model, dur).await.map(|(s, f)| (s, f))
+                }
+            },
+            _ => run_python(st, id, wav, model, dur).await,
+        } };
+        let (segs, fmt) = result?;
+        // past this point the job is saved as a note and can no longer be cancelled
+        st.cancels.lock().unwrap().remove(id);
+        let text = to_txt(&segs, false);
+        let _ = tokio::fs::remove_file(wav).await;
+        // Save as a note (keeps the original audio for playback).
+        let job = st.jobs.lock().await.get(id).cloned();
+        let note_id = match job {
+            Some(j) => {
+                let created = j.created as i64;
+                let title = j
+                    .media_title
+                    .as_deref()
+                    .and_then(notes::clean_title)
+                    .unwrap_or_else(|| notes::default_title(created, &text));
+                let note = Note {
+                    id: id.to_string(),
+                    title,
+                    source_url: j.source_url.clone(),
+                    created,
+                    model: j.model.clone(),
+                    audio_duration: dur,
+                    filename: j.filename.clone(),
+                    audio: None,
+                    audio_bytes: 0,
+                    backend: j.backend.clone(),
+                    segments: segs.clone(),
+                    ..Default::default()
+                };
+                let st2 = st.clone();
+                let input2 = input.to_path_buf();
+                match tokio::task::spawn_blocking(move || st2.notes.create(note, Some(&input2))).await {
+                    Ok(Ok(n)) => Some(n.id),
+                    Ok(Err(e)) => {
+                        eprintln!("[job {id}] could not save note: {e:#}");
+                        None
+                    }
+                    Err(e) => {
+                        eprintln!("[job {id}] could not save note: {e}");
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
+        update(st, id, |j| {
+            j.segments = segs;
+            j.text = Some(text);
+            j.output_format = Some(fmt.into());
+            j.note_id = note_id;
+            j.status = "done".into();
+            j.progress = "Klar".into();
+        })
+        .await;
+        Ok(())
 }
 
 // ---------------------------------------------------------------- handlers
@@ -1070,10 +1259,13 @@ async fn create_job(State(st): State<St>, mut mp: Multipart) -> Response {
     if let Err(e) = tokio::fs::write(&input, &bytes).await {
         return err(StatusCode::INTERNAL_SERVER_ERROR, format!("kunde inte spara filen: {e}"));
     }
-    let job = Job::new(&id, &fname, &model, "queued", "I kö …");
+    let mut job = Job::new(&id, &fname, &model, "queued", "I kö …");
+    job.input = Some(input.clone());
     st.jobs.lock().await.insert(id.clone(), job);
+    persist_job(&st, &id).await;
     eprintln!("[job {id}] queued file={fname:?} bytes={} model={model}", bytes.len());
-    tokio::spawn(process_job(st.clone(), id.clone(), input, model));
+    let cancel = cancel_rx(&st, &id);
+    tokio::spawn(process_job(st.clone(), id.clone(), input, model, cancel));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "status_url": format!("/api/jobs/{id}") })))
         .into_response()
 }
@@ -1116,16 +1308,28 @@ async fn create_url_job(State(st): State<St>, body: Option<Json<UrlReq>>) -> Res
     job.max_duration = Some(st.cfg.url_max_duration as f64);
     job.started = Some(Instant::now());
     st.jobs.lock().await.insert(id.clone(), job);
+    persist_job(&st, &id).await;
     eprintln!("[job {id}] queued url host={label:?} model={model}");
-    tokio::spawn(url_job(st.clone(), id.clone(), url, model));
+    let cancel = cancel_rx(&st, &id);
+    tokio::spawn(url_job(st.clone(), id.clone(), url, model, cancel));
     (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "status_url": format!("/api/jobs/{id}") })))
         .into_response()
 }
 
-async fn url_job(st: St, id: String, url: url::Url, model: String) {
+async fn url_job(st: St, id: String, url: url::Url, model: String, cancel: watch::Receiver<bool>) {
     let dir = st.cfg.work_dir.join(format!("{id}-dl"));
     let limits = url_limits(&st.cfg);
-    let res = tokio::time::timeout(limits.timeout, fetch_url(&st, &id, &url, &dir, &limits)).await;
+    let res = tokio::select! {
+        r = tokio::time::timeout(limits.timeout, fetch_url(&st, &id, &url, &dir, &limits)) => Some(r),
+        _ = cancelled(cancel.clone()) => None,
+    };
+    let Some(res) = res else {
+        eprintln!("[job {id}] cancelled while downloading");
+        st.cancels.lock().unwrap().remove(&id);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        persist_job(&st, &id).await;
+        return;
+    };
     let res = match res {
         Ok(r) => r,
         Err(_) => Err(fetch::FetchError::Timeout { secs: limits.timeout.as_secs() }),
@@ -1150,7 +1354,7 @@ async fn url_job(st: St, id: String, url: url::Url, model: String) {
                 j.progress = "I kö …".into();
             })
             .await;
-            process_job(st, id, input, model).await;
+            process_job(st, id, input, model, cancel).await;
         }
         Err(e) => {
             let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -1168,6 +1372,8 @@ async fn url_failed(st: &St, id: &str, e: fetch::FetchError) {
         j.progress = "Fel".into();
     })
     .await;
+    st.cancels.lock().unwrap().remove(id);
+    persist_job(st, id).await;
 }
 
 async fn fetch_url(st: &St, id: &str, url: &url::Url, dir: &Path, limits: &fetch::Limits) -> Result<fetch::Downloaded, fetch::FetchError> {
@@ -1248,11 +1454,123 @@ async fn get_job(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
             if let (Some(t), false) = (j.started, matches!(j.status.as_str(), "done" | "error")) {
                 j.elapsed_s = t.elapsed().as_secs_f64();
             }
+            j.retryable = j.can_retry();
             Json(j.clone()).into_response()
         }
         None => err(StatusCode::NOT_FOUND, "okänt jobb"),
     }
 }
+
+// --- cx: queue control (handlers) ---
+#[derive(Deserialize)]
+struct JobsQ {
+    /// comma-separated job ids; all jobs when absent
+    ids: Option<String>,
+}
+
+/// GET /api/jobs?ids=a,b – compact list for the queue (no segments or logs)
+async fn list_jobs(State(st): State<St>, Query(q): Query<JobsQ>) -> Response {
+    let want: Option<Vec<&str>> = q.ids.as_deref().map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect());
+    let jobs = st.jobs.lock().await;
+    let mut v: Vec<&Job> = jobs.values().filter(|j| want.as_ref().is_none_or(|w| w.contains(&j.id.as_str()))).collect();
+    v.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+    let out: Vec<serde_json::Value> = v
+        .into_iter()
+        .map(|j| {
+            serde_json::json!({
+                "id": j.id, "filename": j.filename, "model": j.model, "status": j.status,
+                "progress": j.progress, "created": j.created, "audio_duration": j.audio_duration,
+                "source_url": j.source_url, "media_title": j.media_title, "note_id": j.note_id,
+                "error_user": j.error_user, "cancelled": j.cancelled, "retryable": j.can_retry(),
+                "elapsed_s": j.started.filter(|_| j.is_active()).map(|t| t.elapsed().as_secs_f64()).unwrap_or(j.elapsed_s),
+            })
+        })
+        .collect();
+    Json(out).into_response()
+}
+
+/// POST /api/jobs/{id}/cancel – stop a queued, downloading or running job (kills ffmpeg/prata).
+async fn cancel_job(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
+    let mut jobs = st.jobs.lock().await;
+    let Some(j) = jobs.get_mut(&id) else { return err(StatusCode::NOT_FOUND, "okänt jobb") };
+    if !j.is_active() {
+        return err(StatusCode::CONFLICT, "jobbet körs inte");
+    }
+    let sent = st.cancels.lock().unwrap().get(&id).map(|tx| tx.send_replace(true)).is_some();
+    if !sent {
+        return err(StatusCode::CONFLICT, "jobbet håller på att sparas och kan inte avbrytas");
+    }
+    j.status = "error".into();
+    j.cancelled = true;
+    j.error = Some("avbruten av användaren".into());
+    j.error_user = Some(JOB_CANCELLED.into());
+    j.progress = "Avbruten".into();
+    if let Some(t) = j.started {
+        j.elapsed_s = t.elapsed().as_secs_f64();
+    }
+    let out = j.clone();
+    drop(jobs);
+    eprintln!("[job {id}] cancel requested");
+    persist_job(&st, &id).await;
+    Json(out).into_response()
+}
+
+/// POST /api/jobs/{id}/retry – run a failed or cancelled job again (same id).
+async fn retry_job(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
+    let mut jobs = st.jobs.lock().await;
+    let Some(j) = jobs.get_mut(&id) else { return err(StatusCode::NOT_FOUND, "okänt jobb") };
+    if j.status != "error" {
+        return err(StatusCode::CONFLICT, "bara misslyckade eller avbrutna jobb kan köras om");
+    }
+    if !j.can_retry() {
+        return err(StatusCode::CONFLICT, "Originalfilen finns inte kvar – ladda upp den igen.");
+    }
+    let url = match j.source_url.as_deref().map(url::Url::parse) {
+        Some(Ok(u)) => Some(u),
+        Some(Err(_)) => return err(StatusCode::CONFLICT, "ogiltig länk"),
+        None => None,
+    };
+    let fresh = {
+        let mut n = Job::new(&j.id, &j.filename, &j.model, if url.is_some() { "downloading" } else { "queued" }, if url.is_some() { "Laddar ner …" } else { "I kö …" });
+        n.created = j.created;
+        n.source_url = j.source_url.clone();
+        n.max_duration = j.max_duration;
+        n.input = if url.is_some() { None } else { j.input.clone() };
+        if url.is_some() {
+            n.started = Some(Instant::now());
+        }
+        n
+    };
+    let input = fresh.input.clone();
+    let model = fresh.model.clone();
+    *j = fresh;
+    drop(jobs);
+    persist_job(&st, &id).await;
+    eprintln!("[job {id}] retry");
+    let cancel = cancel_rx(&st, &id);
+    match (url, input) {
+        (Some(u), _) => drop(tokio::spawn(url_job(st.clone(), id.clone(), u, model, cancel))),
+        (None, Some(i)) => drop(tokio::spawn(process_job(st.clone(), id.clone(), i, model, cancel))),
+        (None, None) => unreachable!("can_retry checked the input"),
+    }
+    (StatusCode::ACCEPTED, Json(serde_json::json!({ "id": id, "status_url": format!("/api/jobs/{id}") }))).into_response()
+}
+
+/// DELETE /api/jobs/{id} – cancel if needed and forget the job (its kept upload too).
+/// A finished job's note is not touched (use DELETE /api/notes/{id} for that).
+async fn delete_job(State(st): State<St>, AxPath(id): AxPath<String>) -> Response {
+    if let Some(tx) = st.cancels.lock().unwrap().remove(&id) {
+        tx.send_replace(true);
+    }
+    let Some(j) = st.jobs.lock().await.remove(&id) else { return err(StatusCode::NOT_FOUND, "okänt jobb") };
+    if let Some(i) = j.input.filter(|i| i.parent() == Some(st.cfg.work_dir.as_path())) {
+        let _ = tokio::fs::remove_file(i).await;
+    }
+    persist_job(&st, &id).await; // the job is gone: removes the record
+    eprintln!("[job {id}] deleted (was {})", j.status);
+    StatusCode::NO_CONTENT.into_response()
+}
+// --- cx: queue control (handlers) end ---
 
 async fn download(st: &St, id: &str, kind: &str) -> Response {
     let jobs = st.jobs.lock().await;
@@ -1515,9 +1833,11 @@ fn app(st: St) -> Router {
         .route("/api/info", get(info))
         .route("/api/model-hint", get(model_hint))
         .route("/api/health", get(health))
-        .route("/api/jobs", post(create_job))
+        .route("/api/jobs", get(list_jobs).post(create_job))
         .route("/api/jobs/url", post(create_url_job))
-        .route("/api/jobs/{id}", get(get_job))
+        .route("/api/jobs/{id}", get(get_job).delete(delete_job))
+        .route("/api/jobs/{id}/cancel", post(cancel_job))
+        .route("/api/jobs/{id}/retry", post(retry_job))
         .route("/api/jobs/{id}/txt", get(dl_txt))
         .route("/api/jobs/{id}/txt-ts", get(dl_txt_ts))
         .route("/api/jobs/{id}/srt", get(dl_srt))
@@ -1585,11 +1905,17 @@ async fn main() -> Result<()> {
         Some(y) => eprintln!("yt-dlp: {} ({})", y.version, y.path.display()),
         None => eprintln!("yt-dlp: not found – links to web pages (YouTube …) need it: brew install yt-dlp; direct audio/video links still work"),
     }
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let swept = sweep_jobs(&cfg.work_dir, now);
+    if !swept.is_empty() {
+        eprintln!("jobs: {} unfinished or failed job(s) from before the restart can be retried", swept.len());
+    }
     let st: St = Arc::new(AppState {
         cfg,
         prata: Mutex::new(prata),
-        jobs: Mutex::new(HashMap::new()),
+        jobs: Mutex::new(swept.into_iter().map(|j| (j.id.clone(), j)).collect()),
         gate: Semaphore::new(1),
+        cancels: Default::default(),
         notes: store,
         ytdlp: Mutex::new(ytdlp),
         net: net_policy(),
@@ -1622,6 +1948,7 @@ mod api_tests {
             prata: Mutex::new(PrataInfo::default()),
             jobs: Mutex::new(HashMap::new()),
             gate: Semaphore::new(1),
+            cancels: Default::default(),
             ytdlp: Mutex::new(None),
             net,
             klang: None,
@@ -1654,6 +1981,7 @@ mod api_tests {
             prata: Mutex::new(PrataInfo::default()),
             jobs: Mutex::new(HashMap::new()),
             gate: Semaphore::new(1),
+            cancels: Default::default(),
             ytdlp: Mutex::new(None),
             net: fetch::NetPolicy::strict(),
         });
@@ -1813,6 +2141,32 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
         v
     }
 
+    #[tokio::test]
+    async fn ffmpeg_to_wav_uses_first_audio_stream() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipped: no ffmpeg");
+            return;
+        }
+        // Two audio streams like a Spatial Audio voice memo: a:0 mono 1 s (the recording) and
+        // a:1 stereo 3 s marked as default. Without -map, ffmpeg picks a:1 and gives 3 s.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("multi.m4a");
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=16000",
+                "-f", "lavfi", "-i", "sine=frequency=880:duration=3:sample_rate=48000",
+                "-filter_complex", "[1:a]pan=stereo|c0=c0|c1=c0[st]",
+                "-map", "0:a", "-map", "[st]", "-c:a", "aac", "-disposition:a:0", "0", "-disposition:a:1", "default"])
+            .arg(&src)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let wav = dir.path().join("out.wav");
+        ffmpeg_to_wav(&src, &wav).await.unwrap();
+        let d = wav_duration(&wav).await;
+        assert!((d - 1.0).abs() < 0.15, "expected the 1 s first stream, got {d} s");
+    }
+
     async fn upload(app: &Router, model: &str) -> String {
         let bnd = "XprataBoundaryX";
         let mut body = format!("--{bnd}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n--{bnd}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"klipp.wav\"\r\nContent-Type: audio/wav\r\n\r\n").into_bytes();
@@ -1872,6 +2226,204 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
         let n: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_eq!(n["model"], "snabb");
     }
+
+    // --- cx: queue control tests ---
+    /// Fake prata: sleeps (writing its pid) while `<dir>/slow` exists, else prints an SRT.
+    fn fake_prata_slow(dir: &Path) -> PathBuf {
+        let p = dir.join("prata-slow");
+        let d = dir.display();
+        let script = format!(
+            r#"#!/bin/sh
+if [ "$1" = "--help" ]; then echo "Usage: prata [OPTIONS] --model <MODEL> --timestamps"; echo "Snabb: available in this build (--model snabb)."; exit 0; fi
+if [ -f "{d}/slow" ]; then echo $$ > "{d}/pid"; echo "[info] window 0.0s done in 0.1s (1/9)" >&2; exec sleep 30; fi
+printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
+"#
+        );
+        std::fs::write(&p, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        p
+    }
+
+    async fn job_json(app: &Router, id: &str) -> (StatusCode, serde_json::Value) {
+        let (c, _, b) = call(app, "GET", &format!("/api/jobs/{id}"), None, None).await;
+        (c, serde_json::from_slice(&b).unwrap_or(serde_json::Value::Null))
+    }
+
+    async fn wait_status(app: &Router, id: &str, want: &str) -> serde_json::Value {
+        for _ in 0..200 {
+            let (_, j) = job_json(app, id).await;
+            if j["status"] == want {
+                return j;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("job {id} never reached {want}: {}", job_json(app, id).await.1);
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: &str) -> bool {
+        std::process::Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn jobs_cancel_retry_delete_and_list() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = fake_prata_slow(tmp.path());
+        let st = state_with(tmp.path(), fetch::NetPolicy::strict(), |c| {
+            c.prata_bin = Some(bin.clone());
+            c.backend = "prata".into();
+        });
+        let app = app(st.clone());
+        call(&app, "GET", "/api/info", None, None).await; // probe the fake prata
+        std::fs::write(tmp.path().join("slow"), "").unwrap();
+
+        let a = upload(&app, "snabb").await;
+        wait_status(&app, &a, "running").await;
+        let b = upload(&app, "snabb").await; // waits for the one-at-a-time gate
+        assert_eq!(job_json(&app, &b).await.1["status"], "queued");
+        let (_, _, l) = call(&app, "GET", &format!("/api/jobs?ids={a},{b}"), None, None).await;
+        let l: serde_json::Value = serde_json::from_slice(&l).unwrap();
+        assert_eq!(l.as_array().unwrap().len(), 2, "{l}");
+        assert!(l[0].get("segments").is_none());
+
+        // cancel the queued job, then the running one: prata is killed, the worker carries on
+        let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{b}/cancel"), None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        let pid = std::fs::read_to_string(tmp.path().join("pid")).unwrap().trim().to_string();
+        assert!(pid_alive(&pid));
+        let (c, _, body) = call(&app, "POST", &format!("/api/jobs/{a}/cancel"), None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        let j: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!((j["status"].as_str(), j["cancelled"].as_bool(), j["error_user"].as_str()), (Some("error"), Some(true), Some(JOB_CANCELLED)));
+        let mut gone = false;
+        for _ in 0..100 {
+            if !pid_alive(&pid) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(gone, "prata (pid {pid}) still running after cancel");
+        let (_, ja) = job_json(&app, &a).await;
+        assert_eq!(ja["retryable"], true, "{ja}");
+        let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{a}/cancel"), None, None).await;
+        assert_eq!(c, StatusCode::CONFLICT);
+
+        // retry both (fast now); the same ids finish as notes
+        std::fs::remove_file(tmp.path().join("slow")).unwrap();
+        for id in [&a, &b] {
+            let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{id}/retry"), None, None).await;
+            assert_eq!(c, StatusCode::ACCEPTED);
+        }
+        let ja = wait_job(&app, &a).await;
+        let jb = wait_job(&app, &b).await;
+        assert_eq!((ja["status"].as_str(), jb["status"].as_str()), (Some("done"), Some("done")), "{ja} {jb}");
+        assert_eq!(ja["cancelled"], false);
+        let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{a}/retry"), None, None).await;
+        assert_eq!(c, StatusCode::CONFLICT);
+
+        // delete forgets the job but keeps its note
+        let note = ja["note_id"].as_str().unwrap().to_string();
+        let (c, _, _) = call(&app, "DELETE", &format!("/api/jobs/{a}"), None, None).await;
+        assert_eq!(c, StatusCode::NO_CONTENT);
+        assert_eq!(job_json(&app, &a).await.0, StatusCode::NOT_FOUND);
+        let (c, _, _) = call(&app, "GET", &format!("/api/notes/{note}"), None, None).await;
+        assert_eq!(c, StatusCode::OK);
+        // finished jobs leave no uploads or records behind
+        let left: Vec<_> = std::fs::read_dir(&st.cfg.work_dir).unwrap().flatten().map(|e| e.file_name()).filter(|n| n != "jobs").collect();
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(std::fs::read_dir(jobs_dir(&st.cfg.work_dir)).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn delete_running_job_kills_it_and_removes_the_upload() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = fake_prata_slow(tmp.path());
+        let st = state_with(tmp.path(), fetch::NetPolicy::strict(), |c| {
+            c.prata_bin = Some(bin.clone());
+            c.backend = "prata".into();
+        });
+        let app = app(st.clone());
+        call(&app, "GET", "/api/info", None, None).await;
+        std::fs::write(tmp.path().join("slow"), "").unwrap();
+        let a = upload(&app, "snabb").await;
+        wait_status(&app, &a, "running").await;
+        let pid = std::fs::read_to_string(tmp.path().join("pid")).unwrap().trim().to_string();
+        let (c, _, _) = call(&app, "DELETE", &format!("/api/jobs/{a}"), None, None).await;
+        assert_eq!(c, StatusCode::NO_CONTENT);
+        for _ in 0..100 {
+            if !pid_alive(&pid) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!pid_alive(&pid));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let left: Vec<_> = std::fs::read_dir(&st.cfg.work_dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert!(left.iter().all(|n| n == "jobs"), "{left:?}");
+        assert_eq!(std::fs::read_dir(jobs_dir(&st.cfg.work_dir)).unwrap().count(), 0);
+        // the gate was released: a new job runs
+        std::fs::remove_file(tmp.path().join("slow")).unwrap();
+        let b = upload(&app, "snabb").await;
+        assert_eq!(wait_job(&app, &b).await["status"], "done");
+    }
+
+    #[test]
+    fn startup_sweep_marks_orphans_failed_and_expires_old_jobs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let w = tmp.path().join("work");
+        let jd = jobs_dir(&w);
+        std::fs::create_dir_all(&jd).unwrap();
+        let now = 1_800_000_000u64;
+        let rec = |id: &str, status: &str, age: u64, input: Option<PathBuf>, url: Option<&str>| {
+            if let Some(i) = &input {
+                std::fs::write(i, b"audio").unwrap();
+            }
+            let r = JobRec { id: id.into(), filename: format!("{id}.m4a"), model: "small".into(), status: status.into(), created: now - age, input, source_url: url.map(String::from), ..Default::default() };
+            std::fs::write(jd.join(format!("{id}.json")), serde_json::to_vec(&r).unwrap()).unwrap();
+        };
+        rec("running1", "running", 60, Some(w.join("running1.m4a")), None);
+        rec("queued1", "queued", 30, Some(w.join("queued1.m4a")), None);
+        rec("link1", "downloading", 20, None, Some("https://example.com/a.mp3"));
+        rec("failed1", "error", 10, Some(w.join("failed1.m4a")), None);
+        rec("old1", "error", 8 * 86400, Some(w.join("old1.m4a")), None);
+        rec("outside", "queued", 5, Some(tmp.path().join("outside.m4a")), None);
+        std::fs::write(jd.join("junk.json"), b"{not json").unwrap();
+        std::fs::write(w.join("x.16k.wav"), b"").unwrap();
+        std::fs::create_dir_all(w.join("abc-dl")).unwrap();
+
+        let jobs = sweep_jobs(&w, now);
+        let ids: Vec<&str> = jobs.iter().map(|j| j.id.as_str()).collect();
+        assert_eq!(ids, ["running1", "queued1", "link1", "failed1", "outside"]);
+        for j in &jobs {
+            assert_eq!(j.status, "error");
+        }
+        assert_eq!(jobs[0].error_user.as_deref(), Some(JOB_INTERRUPTED));
+        assert!(jobs[0].can_retry() && jobs[1].can_retry() && jobs[2].can_retry());
+        assert_eq!(jobs[3].error_user, None, "an earlier failure keeps its own message");
+        assert!(!jobs[4].can_retry(), "inputs outside work_dir are never reused");
+        assert!(tmp.path().join("outside.m4a").exists(), "…nor deleted");
+        assert!(!w.join("old1.m4a").exists() && !jd.join("old1.json").exists());
+        assert!(!jd.join("junk.json").exists() && !w.join("x.16k.wav").exists() && !w.join("abc-dl").exists());
+        // the record now says error, so a second restart does not report it again
+        let r: JobRec = serde_json::from_slice(&std::fs::read(jd.join("running1.json")).unwrap()).unwrap();
+        assert_eq!(r.status, "error");
+    }
+    // --- cx: queue control tests end ---
 
     #[tokio::test]
     async fn snabb_unsupported_build_gives_swedish_error_without_python_fallback() {
@@ -1958,7 +2510,8 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
             assert_eq!(j["error_user"], "Ljudet är för långt. Gränsen är 1 s.", "{j}");
         }
         // temp files are gone
-        let left: Vec<_> = std::fs::read_dir(&st.cfg.work_dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        // (the jobs/ folder holds the restart records of the failed jobs)
+        let left: Vec<_> = std::fs::read_dir(&st.cfg.work_dir).unwrap().flatten().map(|e| e.file_name()).filter(|n| n != "jobs").collect();
         assert!(left.is_empty(), "{left:?}");
 
         // a web page without yt-dlp → clear hint; HTTP errors are reported
