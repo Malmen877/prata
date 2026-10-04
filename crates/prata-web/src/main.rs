@@ -2268,6 +2268,19 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
         panic!("job {id} never reached {want}: {}", job_json(app, id).await.1);
     }
 
+    /// The fake prata writes its pid right after it starts (status "running" is set just before).
+    async fn wait_pid(dir: &Path) -> String {
+        for _ in 0..200 {
+            if let Ok(p) = std::fs::read_to_string(dir.join("pid")) {
+                if !p.trim().is_empty() {
+                    return p.trim().to_string();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("fake prata never wrote its pid");
+    }
+
     #[cfg(unix)]
     fn pid_alive(pid: &str) -> bool {
         std::process::Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
@@ -2302,7 +2315,7 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
         // cancel the queued job, then the running one: prata is killed, the worker carries on
         let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{b}/cancel"), None, None).await;
         assert_eq!(c, StatusCode::OK);
-        let pid = std::fs::read_to_string(tmp.path().join("pid")).unwrap().trim().to_string();
+        let pid = wait_pid(tmp.path()).await;
         assert!(pid_alive(&pid));
         let (c, _, body) = call(&app, "POST", &format!("/api/jobs/{a}/cancel"), None, None).await;
         assert_eq!(c, StatusCode::OK);
@@ -2366,7 +2379,7 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
         std::fs::write(tmp.path().join("slow"), "").unwrap();
         let a = upload(&app, "snabb").await;
         wait_status(&app, &a, "running").await;
-        let pid = std::fs::read_to_string(tmp.path().join("pid")).unwrap().trim().to_string();
+        let pid = wait_pid(tmp.path()).await;
         let (c, _, _) = call(&app, "DELETE", &format!("/api/jobs/{a}"), None, None).await;
         assert_eq!(c, StatusCode::NO_CONTENT);
         for _ in 0..100 {
