@@ -1010,7 +1010,14 @@ function cxQSave() { try { localStorage.setItem("prata.queue", JSON.stringify(cx
 function cxQRender() {
   const el = $("jobQueue");
   el.classList.toggle("hidden", !cxQ.length);
-  if (!cxQ.length) { el.innerHTML = ""; return; }
+  if (!cxQ.length) {
+    el.innerHTML = "";
+    if (!busy && $("statusCard").classList.contains("hidden")) $("statusSec").classList.add("hidden");
+    return;
+  }
+  if (!busy && $("statusSec").classList.contains("hidden")) {   // finished card hid the section: keep the list reachable
+    $("statusCard").classList.add("hidden"); $("statusSec").classList.remove("hidden");
+  }
   const waiting = cxQ.filter(x => x.status !== "error").length;
   el.innerHTML = `<div class="meta q-head">${waiting ? "Väntar på tur (" + waiting + ")" : "Kvar i kön"}</div>` + cxQ.map((x, i) => {
     const failed = x.status === "error";
