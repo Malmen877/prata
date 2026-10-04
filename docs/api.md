@@ -15,3 +15,10 @@ Klang API (only when enabled, else `404`): `POST /api/klang/sync` starts a sync 
 and answers `202 {running, started_at, last}`; `GET /api/klang/sync` → `{enabled, running, last: {new, updated,
 unchanged, skipped, deleted_here, error, message, finished_at}}` (`skipped` = could not be imported,
 `deleted_here` = deleted in Prata earlier). `GET /api/info` has `klang_enabled` (never the key).
+
+Word list (Ordlista): `GET /api/wordlist` → `{entries: [{right, wrong: […]}]}`; `PUT /api/wordlist` with the same shape
+replaces the list (validated: trimmed, empty rows dropped, max 1000 entries × 30 wrong forms, 100 characters each;
+`400 {error}` in Swedish otherwise) and answers with the cleaned list. Stored in `wordlist.json` next to the notes
+directory (default `~/.prata/wordlist.json`). It is applied to every new transcription: case-insensitive, whole words
+(åäö count as letters), a space matches any whitespace, longest wrong form first, no re-replacement.
+`POST /api/notes/{id}/wordlist` applies the current list to an existing note → `{replaced: n}`.
