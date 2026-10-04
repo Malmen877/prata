@@ -1,6 +1,8 @@
-# Prata
+# Prata – gratis svensk tal till text, offline
 
-> **Svenska:** Prata är en lokal app för svensk tal-till-text i webbläsaren. Allt körs på din egen dator; inget ljud lämnar den.
+[![npm](https://img.shields.io/npm/v/prata-app)](https://www.npmjs.com/package/prata-app) [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+> **Svenska:** Gratis och öppen källkod. Spela in eller släpp en ljudfil och få en text med tidsstämplar – för intervjuer, möten och föreläsningar. Allt körs på din egen Mac eller Linux-dator; inget ljud lämnar den.
 
 Prata is a local, private Swedish speech-to-text app. You can record or drop a file in the browser and get a
 timestamped transcript (.txt, .srt, .json). It runs [KB-Whisper](https://huggingface.co/KBLab/kb-whisper-large)
@@ -14,11 +16,12 @@ files with cancel and retry, an Ordlista for names, and time left while transcri
 ## Install
 
 ```bash
-npx prata-app
+npx prata-app@latest
 ```
 
-Needs macOS (Apple Silicon; Intel works without Snabb) or Linux x64 with glibc 2.39+, plus ffmpeg (`brew install ffmpeg`
-/ `sudo apt install ffmpeg`). Details: [docs/install.md](docs/install.md) · [docs/linux.md](docs/linux.md).
+**Kräver Node.js 18+ och ffmpeg** (`brew install node ffmpeg` / `sudo apt install nodejs npm ffmpeg`). Runs on macOS
+(Apple Silicon; Intel works without Snabb) or Linux x64 with glibc 2.39+.
+Details: [docs/install.md](docs/install.md) · [docs/linux.md](docs/linux.md).
 
 ## Models
 
@@ -45,7 +48,8 @@ login, so everyone in your tailnet can reach it. Setup and LaunchAgent: [docs/ip
 
 [Using Prata (notes, links)](docs/usage.md) · [Klang import](docs/klang-import.md) · [CLI and configuration](docs/cli.md) ·
 [HTTP API](docs/api.md) · [Building from source](docs/development.md) · [Limitations](docs/limitations.md) ·
-[Changelog](CHANGELOG.md)
+[Changelog](CHANGELOG.md) ·
+[Prata vs MacWhisper, Sagt, Aloud, Transkribera](docs/jamforelse.md) · [Website](https://malmen877.github.io/prata/)
 
 ## License
 
