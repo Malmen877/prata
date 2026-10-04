@@ -95,3 +95,23 @@ assert.deepEqual(jp(run([snabbHead, "[info] downloading encoder-model.int8.onnx:
 assert.deepEqual(jp(run(["[info] window 60.0s: no speech, skipped (3/10)"])), { pct: 30, phase: null });
 assert.equal(pctx.progressPct(run(["[info] window 30.0s done in 9.1s"])), 20);
 console.log("ui progress tests: ok");
+
+// recording watchdog (cx: safe recording)
+const rw = /\/\/ --- recwatch:start[^\n]*\n([\s\S]*?)\/\/ --- recwatch:end/.exec(html);
+assert.ok(rw, "recwatch markers not found");
+const rctx = {};
+vm.runInNewContext(rw[1] + "\nthis.recWatchMsg = recWatchMsg; this.recGapMs = recGapMs;", rctx);
+const { recWatchMsg, recGapMs } = rctx;
+const T = 1_000_000, ok = { now: T, lastChunk: T - 900, lastSound: T - 200, lostMs: 0, muted: false, ended: false };
+assert.equal(recWatchMsg(ok), "");
+assert.equal(recWatchMsg({ ...ok, lastSound: T - 9000 }), "", "short silence is fine");
+assert.match(recWatchMsg({ ...ok, lastSound: T - 12000 }), /^Hör inget – är mikrofonen på\? Inget ljud på 12 s\.$/);
+assert.match(recWatchMsg({ ...ok, lastChunk: T - 7000 }), /stannat – inga nya ljuddata på 7 s/);
+assert.match(recWatchMsg({ ...ok, muted: true, lastSound: T - 60000 }), /pausad av systemet/, "muted wins over silence");
+assert.match(recWatchMsg({ ...ok, ended: true, muted: true }), /kopplades bort/);
+assert.equal(recWatchMsg({ ...ok, lostMs: 1000 }), "", "a hiccup under 1.5 s is not reported");
+assert.equal(recWatchMsg({ ...ok, lostMs: 42400 }), "Inspelningen pausades när skärmen låstes – ca 42 s saknas.");
+assert.equal(recGapMs(T, T - 2000, T - 1500), 0, "chunks kept coming (desktop tab in the background)");
+assert.equal(recGapMs(T, T - 30000, T - 29500), 29500, "screen locked 29.5 s after the last chunk");
+assert.equal(recGapMs(T, T - 30000, T - 40000), 30000);
+console.log("ui recording watchdog tests: ok");

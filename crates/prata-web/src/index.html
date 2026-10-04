@@ -155,6 +155,13 @@ h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
 .steps span.done{color:var(--ok)}.steps span.cur{color:var(--ink);font-weight:500}
 .proc .full{grid-column:1/-1}
 .proc .err{margin-top:0}
+/* --- cx: safe recording --- */
+.recwarn{margin:10px auto 0;max-width:420px;font-size:13.5px;line-height:1.45;color:var(--err)}
+.restore{margin:0 0 18px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface-2);display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px;text-align:left}
+.restore .rt{flex:1 1 220px;color:var(--ink-2);line-height:1.4}
+.restore .btn{height:32px;padding:0 12px;font-size:13px}
+@media (max-width:640px){.restore .btn{height:40px;padding:0 14px;font-size:14px}}
+/* --- cx: safe recording end --- */
 /* --- cx: queue --- */
 .proc .jobctl{grid-column:1/-1;display:flex;justify-content:flex-end;margin-top:-2px}
 .proc .jobctl .btn,.q-row .btn{height:30px;padding:0 12px;font-size:13px}
@@ -359,6 +366,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
 
 <div class="stage">
   <div class="recorder">
+    <div class="restore hidden" id="recRestore"></div>
     <div class="rtop" id="modelBox">
       <div class="rlabel" id="modelLbl">Modell</div>
       <!-- rendered from /api/info.picker (Snabb, Standard, Large); tiny/base/medium still work via CLI/API -->
@@ -386,6 +394,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
     <canvas class="wave" id="wave" aria-hidden="true"></canvas>
     <div class="meter hidden" id="meter" aria-hidden="true"><div id="level"></div></div>
     <div class="err hidden" id="recErr" role="alert"></div>
+    <div class="recwarn hidden" id="recWarn" role="status" aria-live="polite"></div>
 
     <button type="button" class="uplink" id="uplink">eller <u>välj en ljudfil</u></button>
     <div class="drop" id="drop" role="button" tabindex="0" aria-label="Välj en ljudfil eller dra och släpp den här">
@@ -791,6 +800,7 @@ async function startJob(blob, filename) {
     let j = {}; try { j = await r.json(); } catch (_) {}
     if (!r.ok) throw new Error(j.error || r.status + " " + r.statusText);
     jobId = j.id; localBlobs.set(j.id, blob);
+    cxRecUploaded(blob);   // cx: safe recording – the server has it now
     try { localStorage.setItem("prata.job", j.id); } catch (_) {}
     poll(); timer = setInterval(poll, 1500);
   } catch (e) { jobFailed("Uppladdningen misslyckades.", "Kontrollera att Prata fortfarande körs och försök igen."); }
@@ -1421,17 +1431,19 @@ async function startRecording() {
   try { rec = mime ? new MediaRecorder(recStream, { mimeType: mime }) : new MediaRecorder(recStream); }
   catch (e) { releaseMic(); return recError("Inspelning stöds inte i den här webbläsaren.", e.message); }
   recChunks = [];
-  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.ondataavailable = e => { if (e.data && e.data.size) { recChunks.push(e.data); cxRecChunk(e.data); } };
   rec.onerror = e => { releaseMic(); setRecState("idle"); recError("Inspelningsfel.", (e.error && e.error.message) || "okänt fel"); };
   rec.onstop = () => {
     const type = rec.mimeType || mime || (recChunks[0] && recChunks[0].type) || "audio/webm";
     releaseMic(); rec = null;
     const blob = new Blob(recChunks, { type });
+    cxRecStop(blob);   // cx: safe recording
     if (!blob.size) { setRecState("idle"); return recError("Inspelningen blev tom.", "Inget ljud fångades – kontrollera mikrofonen."); }
     const name = `inspelning-${stamp()}.${extFor(type)}`;
     startJob(blob, name);
   };
   rec.start(1000);
+  cxRecStart(rec.mimeType || mime);   // cx: safe recording
   recStart = Date.now(); $("recTime").textContent = "00:00";
   recTick = setInterval(() => {
     const el = (Date.now() - recStart) / 1000;
@@ -1451,6 +1463,149 @@ document.addEventListener("keydown", e => {   // Space toggles recording when fo
   if ($("rec").disabled) return;
   e.preventDefault(); $("rec").click();
 });
+
+// --- cx: safe recording ---
+// Each 1 s MediaRecorder chunk is also written to IndexedDB ("prata-rec"), so a crash, reload or
+// closed tab doesn't lose the recording: the next visit offers "Återställ inspelning". Cleared as
+// soon as the upload is accepted. Also: Wake Lock while recording, a beforeunload guard, and a mic
+// watchdog (no sound, no new data, muted/ended track, gap while the screen was locked).
+let cxR = null, cxWakeLock = null, cxDbP = null;
+const cxRecOf = new WeakMap(), cxWrites = new Map();   // blob -> recording id; id -> pending writes
+function cxDb() {
+  if (!cxDbP) {
+    cxDbP = new Promise((res, rej) => {
+      if (!window.indexedDB) return rej(new Error("no IndexedDB"));
+      const r = indexedDB.open("prata-rec", 1);
+      r.onupgradeneeded = () => { const db = r.result; db.createObjectStore("recs", { keyPath: "id" }); db.createObjectStore("chunks", { keyPath: ["rec", "seq"] }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    cxDbP.catch(() => {});
+  }
+  return cxDbP;
+}
+function cxIdb(stores, mode, fn) {   // fn(tx) in one transaction -> promise of the last request's result
+  return cxDb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(stores, mode); let req;
+    try { req = fn(tx); } catch (e) { return rej(e); }
+    tx.oncomplete = () => res(req && "result" in req ? req.result : undefined);
+    tx.onerror = tx.onabort = () => rej(tx.error);
+  }));
+}
+const cxRange = id => IDBKeyRange.bound([id, 0], [id, Infinity]);
+function cxQueueWrite(id, fn) { const p = (cxWrites.get(id) || Promise.resolve()).then(fn).catch(() => {}); cxWrites.set(id, p); return p; }
+function cxRecStart(mime) {
+  const now = Date.now(), r = cxR = { id: "r" + now, mime: mime || "", started: now, seq: 0, bytes: 0, lastChunk: now, lastSound: now, lostMs: 0, mutedAt: 0, hiddenAt: 0, lostAtHide: 0 };
+  cxQueueWrite(r.id, () => cxIdb(["recs"], "readwrite", tx => tx.objectStore("recs").put({ id: r.id, mime: r.mime, started: now, last: now, bytes: 0 })));
+  cxWake();
+  const tr = recStream && recStream.getAudioTracks()[0];
+  if (tr) {
+    tr.addEventListener("mute", () => { if (cxR === r) r.mutedAt = Date.now(); });
+    tr.addEventListener("unmute", () => { if (cxR === r && r.mutedAt) { r.lostMs += Date.now() - r.mutedAt; r.mutedAt = 0; } });
+  }
+  r.tick = setInterval(cxWatch, 1000);
+}
+function cxRecChunk(data) {
+  const r = cxR; if (!r) return;
+  const seq = r.seq++; r.bytes += data.size; r.lastChunk = Date.now();
+  const meta = { id: r.id, mime: r.mime || data.type, started: r.started, last: r.lastChunk, bytes: r.bytes };
+  cxQueueWrite(r.id, () => data.arrayBuffer().then(buf => cxIdb(["chunks", "recs"], "readwrite", tx => {   // ArrayBuffer: safest across Safari versions
+    tx.objectStore("chunks").put({ rec: r.id, seq, buf, type: data.type }); return tx.objectStore("recs").put(meta);
+  })));
+}
+function cxRecStop(blob) {   // the recorder stopped; IndexedDB is kept until the upload is accepted
+  const r = cxR; cxR = null; if (!r) return;
+  clearInterval(r.tick); cxWarn(""); cxWakeRelease();
+  if (blob && blob.size) cxRecOf.set(blob, r.id); else cxRecDrop(r.id);
+}
+function cxRecUploaded(blob) {
+  const id = blob && cxRecOf.get(blob);
+  if (id) { cxRecOf.delete(blob); cxRecDrop(id).then(cxRecCheck); }
+}
+function cxRecDrop(id) {
+  return cxQueueWrite(id, () => cxIdb(["chunks", "recs"], "readwrite", tx => { tx.objectStore("chunks").delete(cxRange(id)); return tx.objectStore("recs").delete(id); }))
+    .then(() => { if (cxWrites.get(id)) cxWrites.delete(id); });
+}
+function cxStamp(ms) { const d = new Date(ms); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; }
+async function cxRecBlob(id) {
+  const meta = await cxIdb(["recs"], "readonly", tx => tx.objectStore("recs").get(id));
+  const chunks = (await cxIdb(["chunks"], "readonly", tx => tx.objectStore("chunks").getAll(cxRange(id)))) || [];
+  chunks.sort((a, b) => a.seq - b.seq);
+  const type = (meta && meta.mime) || (chunks[0] && chunks[0].type) || "audio/webm";
+  return { blob: new Blob(chunks.map(c => c.buf), { type }), name: `inspelning-${cxStamp(meta ? meta.started : Date.now())}.${extFor(type)}` };
+}
+async function cxRecCheck() {   // an earlier recording that never reached the server?
+  let recs;
+  try { recs = (await cxIdb(["recs"], "readonly", tx => tx.objectStore("recs").getAll())) || []; } catch (_) { return; }
+  const mine = cxR && cxR.id, pending = new Set();
+  for (const id of cxWrites.keys()) pending.add(id);
+  recs = recs.filter(x => x.id !== mine && !pending.has(x.id));
+  for (const x of recs.filter(x => !x.bytes)) cxRecDrop(x.id);   // empty leftovers
+  recs = recs.filter(x => x.bytes).sort((a, b) => b.started - a.started);
+  const el = $("recRestore");
+  if (!recs.length) { el.classList.add("hidden"); el.innerHTML = ""; return; }
+  const x = recs[0], secs = Math.max(1, Math.round((x.last - x.started) / 1000));
+  el.dataset.id = x.id;
+  el.innerHTML = `<span class="rt">En inspelning från ${esc(fmtDate(x.started / 1000))} (${fmtShort(secs)}) skickades aldrig.</span>` +
+    `<button type="button" class="btn primary" data-r="restore">Återställ inspelning</button><button type="button" class="btn" data-r="save">Ladda ner</button><button type="button" class="btn" data-r="drop">Släng</button>`;
+  el.classList.remove("hidden");
+}
+$("recRestore").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-r]"), el = $("recRestore"), id = el.dataset.id;
+  if (!b || !id) return;
+  if (b.dataset.r === "drop") {
+    if (!confirm("Slänga inspelningen? Den går inte att få tillbaka.")) return;
+    await cxRecDrop(id); return cxRecCheck();
+  }
+  let r; try { r = await cxRecBlob(id); } catch (_) { return recError("Inspelningen kunde inte läsas.", "Webbläsarens lagring svarade inte. Försök igen."); }
+  if (!r.blob.size) { await cxRecDrop(id); return cxRecCheck(); }
+  if (b.dataset.r === "save") {
+    const a = document.createElement("a"), u = URL.createObjectURL(r.blob);
+    a.href = u; a.download = r.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 10000); return;
+  }
+  if (busy || (rec && rec.state === "recording")) return;
+  cxRecOf.set(r.blob, id); el.classList.add("hidden");
+  startJob(r.blob, r.name);   // cleared from IndexedDB once the upload is accepted
+});
+async function cxWake() { try { if (navigator.wakeLock && !document.hidden) { cxWakeLock = await navigator.wakeLock.request("screen"); if (!cxR) cxWakeRelease(); } } catch (_) {} }
+function cxWakeRelease() { if (cxWakeLock) { cxWakeLock.release().catch(() => {}); cxWakeLock = null; } }
+function cxWarn(t) { const w = $("recWarn"); if (w.textContent !== t) w.textContent = t; w.classList.toggle("hidden", !t); }
+// --- recwatch:start (pure; unit-tested in scripts/test-ui.mjs)
+// Watchdog text for the recording screen ("" = all good). s: {now, lastChunk, lastSound, lostMs, muted, ended} (ms)
+function recWatchMsg(s) {
+  if (s.ended) return "Mikrofonen kopplades bort. Tryck Stoppa för att spara det som spelats in.";
+  if (s.muted) return "Mikrofonen är pausad av systemet – inget ljud spelas in just nu.";
+  if (s.now - s.lastChunk > 5000) return `Inspelningen verkar ha stannat – inga nya ljuddata på ${Math.round((s.now - s.lastChunk) / 1000)} s.`;
+  if (s.now - s.lastSound > 10000) return `Hör inget – är mikrofonen på? Inget ljud på ${Math.round((s.now - s.lastSound) / 1000)} s.`;
+  if (s.lostMs > 1500) return `Inspelningen pausades när skärmen låstes – ca ${Math.round(s.lostMs / 1000)} s saknas.`;
+  return "";
+}
+// Audio lost while the page was hidden: no chunk for > 3 s → the time since the last chunk (or since hiding).
+function recGapMs(now, lastChunk, hiddenAt) { return now - lastChunk > 3000 ? now - Math.max(lastChunk, hiddenAt) : 0; }
+// --- recwatch:end
+function cxWatch() {
+  const r = cxR; if (!r || !rec || rec.state !== "recording" || document.hidden) return;
+  const now = Date.now(), lvl = hist.length ? hist[hist.length - 1] : null, tr = recStream && recStream.getAudioTracks()[0];
+  if (lvl == null || lvl > 0.003) r.lastSound = now;
+  cxWarn(recWatchMsg({ now, lastChunk: r.lastChunk, lastSound: r.lastSound, lostMs: r.lostMs, muted: !!(r.mutedAt || (tr && tr.muted)), ended: !!(tr && tr.readyState === "ended") }));
+}
+document.addEventListener("visibilitychange", () => {
+  const r = cxR; if (!r) return;
+  const now = Date.now();
+  if (document.hidden) { r.hiddenAt = now; r.lostAtHide = r.lostMs; return; }
+  if (r.hiddenAt) {   // back: no data while hidden (iOS stops the mic when the screen locks)
+    const gap = recGapMs(now, r.lastChunk, r.hiddenAt);
+    r.lostMs = r.lostAtHide + Math.max(r.lostMs - r.lostAtHide, gap); r.hiddenAt = 0;
+  }
+  r.lastSound = now; r.lastChunk = Math.max(r.lastChunk, now - 1000);
+  cxWake(); cxWatch();
+});
+window.addEventListener("beforeunload", e => {
+  const recording = rec && rec.state === "recording";
+  const uploading = (busy && !jobIsLink && !cxCardJob()) || cxQ.some(x => x.status === "uploading");
+  if (recording || uploading) { e.preventDefault(); e.returnValue = ""; }
+});
+// --- cx: safe recording end ---
 
 // ------------------------------------------------------------ notes: list, search, open, rename, delete
 let notesCache = [], notesTotal = 0, searchT = null, listToken = 0;
@@ -1716,6 +1871,7 @@ try {
   }
 } catch (_) {}
 cxQInit();   // cx: queue
+cxRecCheck();   // cx: safe recording
 </script>
 </body>
 </html>
