@@ -324,6 +324,14 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
 @media (max-width:359px){.seg{display:none}.pillselect{display:inline-block;max-width:100%}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
   .recbtn.on{box-shadow:var(--sh-rec)}.bar.indet>i{left:30%}.spin,.recbtn .ring{animation:none!important}}
+/* --- cx: v0.7.0 additions (player speed/skip, share, word list) --- */
+.cx-pc{display:inline-flex;align-items:center;gap:2px;flex:none}
+.cx-pb{all:unset;cursor:pointer;box-sizing:border-box;height:32px;min-width:34px;padding:0 7px;border-radius:var(--r-pill);display:inline-flex;align-items:center;justify-content:center;font:500 12.5px var(--mono);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.cx-pb:hover{background:var(--surface-2);color:var(--ink)}
+.cx-pb:focus-visible{outline:3px solid var(--ts);outline-offset:1px}
+.cx-pb.on{color:var(--ink);background:var(--surface-2)}
+@media (max-width:520px){.player{flex-wrap:wrap;row-gap:4px}.cx-pc{order:9;width:100%;justify-content:center;gap:14px}.cx-pb{height:36px;min-width:52px}}
+/* --- cx: end --- */
 </style>
 </head>
 <body>
@@ -451,6 +459,7 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       </div>
       <div class="dls">
         <button type="button" class="btn primary" id="copy">Kopiera text</button>
+        <button type="button" class="btn" id="cxShare">Dela</button><!-- cx: share -->
         <a class="btn" id="dlTxt" download>.txt</a>
         <a class="btn" id="dlTxtTs" download>.txt <small>med tider</small></a>
         <a class="btn" id="dlSrt" download>.srt</a>
@@ -466,6 +475,11 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       <canvas id="scrub" role="slider" tabindex="0" aria-label="Spelposition" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
       <audio id="player" preload="metadata" class="hidden"></audio>
       <span class="t" id="ptime">00:00 / 00:00</span>
+      <span class="cx-pc"><!-- cx: player -->
+        <button type="button" class="cx-pb" id="cxBack" aria-label="15 sekunder bakåt" title="15 s bakåt">−15</button>
+        <button type="button" class="cx-pb" id="cxFwd" aria-label="15 sekunder framåt" title="15 s framåt">+15</button>
+        <button type="button" class="cx-pb" id="cxRate" aria-label="Uppspelningshastighet 1×" title="Hastighet">1×</button>
+      </span>
     </div>
     <div class="meta hidden" id="noAudio" style="padding:14px 24px;border-bottom:1px solid var(--line)">Ljudet kan inte spelas upp i den här webbläsaren – tidsstämplarna och nedladdningarna fungerar ändå.</div>
     <section class="summary hidden" id="summarySec" aria-labelledby="sumH">
@@ -903,6 +917,7 @@ async function poll() {
   if (j.model_download_pct != null && j.status === "running") modelPhase = "model";
   const phaseText = j.phase_text || (modelPhase === "model" ? modelDlText(j.model) : STATUS[j.status] || j.status);
   $("statusText").textContent = phaseText;
+  $("statusText").textContent += cxEta(j);   // cx: eta
   const jhint = j.hint && j.hint.text ? j.hint.text : "";   // optional: if the server adds a hint to the job
   const jh = $("jobHint"); jh.textContent = jhint; jh.classList.toggle("hidden", !jhint || j.status === "done");
   $("procFile").textContent = j.filename + (j.audio_duration ? " · " + fmtShort(j.audio_duration) + " ljud" : "");
@@ -918,6 +933,7 @@ async function poll() {
     hideProcT = setTimeout(() => { if (!busy) $("statusSec").classList.add("hidden"); }, 1200);
     if (jobIsLink) { $("linkInput").value = ""; syncPaste(); }
     await refreshNotes();
+    cxJobDone(j);   // cx: notify
     if (j.note_id) go("#/notes/" + j.note_id);           // lands in Notes and opens
     else { lastJob = j; showJobResult(j); }
   }
@@ -1535,6 +1551,85 @@ function route() {
   renderList(); setTimeout(drawScrub, 0);
 }
 window.addEventListener("hashchange", route);
+
+// --- cx: eta ---
+// "ca 2 min kvar" in the progress text, from the job's own progress rate (per job id, so it works
+// for several cards). Hidden until there is enough progress to be stable; never during model download.
+const cxEtaState = new Map();   // job id -> {t0, p0, last}
+function cxEtaText(sec) {
+  if (sec < 45) return "under 1 min kvar";
+  const m = Math.round(sec / 60);
+  return m < 60 ? `ca ${m} min kvar` : `ca ${Math.floor(m / 60)} h ${m % 60} min kvar`;
+}
+function cxEtaCalc(j, st) {   // pure: returns seconds left or null; updates st
+  const pr = jobProgress(j), pct = typeof j.progress_pct === "number" ? j.progress_pct : pr.pct, t = +j.elapsed_s || 0;
+  if (j.status !== "running" || pr.phase === "model" || pct == null) { st.t0 = null; st.last = null; return null; }
+  if (st.t0 == null || pct < st.p0) { st.t0 = t; st.p0 = pct; st.last = null; return null; }
+  const dp = pct - st.p0, dt = t - st.t0;
+  if (dt < 6 || dp < 3 || pct < 5 || pct > 98) return st.last != null && pct <= 98 ? st.last : null;
+  let left = (100 - pct) * dt / dp;
+  if (st.last != null) left = 0.6 * left + 0.4 * st.last;   // smooth, so it doesn't jump
+  st.last = left; return left;
+}
+function cxEta(j) {
+  if (!j || !j.id) return "";
+  if (j.status === "done" || j.status === "error") { cxEtaState.delete(j.id); return ""; }
+  let st = cxEtaState.get(j.id); if (!st) cxEtaState.set(j.id, st = { t0: null, p0: 0, last: null });
+  const left = cxEtaCalc(j, st);
+  return left == null ? "" : " · " + cxEtaText(left);
+}
+
+// --- cx: notify ---
+// "✓ Klar – <titel>" in the tab title until the tab is looked at again.
+const cxBaseTitle = document.title;
+let cxTitleT = null;
+function cxResetTitle() { clearTimeout(cxTitleT); document.title = cxBaseTitle; }
+function cxNoteTitle(j) {
+  const n = j.note_id && notesCache.find(x => x.id === j.note_id);
+  return (n && n.title) || j.media_title || (j.filename || "").replace(/\.[^.]+$/, "") || "Transkriberingen";
+}
+function cxJobDone(j) {
+  const title = cxNoteTitle(j);
+  clearTimeout(cxTitleT);
+  document.title = "✓ Klar – " + title;
+  if (!document.hidden && document.hasFocus()) cxTitleT = setTimeout(cxResetTitle, 6000);   // seen already
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && document.title !== cxBaseTitle) cxTitleT = setTimeout(cxResetTitle, 1500); });
+window.addEventListener("focus", () => { if (document.title !== cxBaseTitle) { clearTimeout(cxTitleT); cxTitleT = setTimeout(cxResetTitle, 1500); } });
+
+// --- cx: player ---
+// ±15 s and playback speed 1× / 1,5× / 2× (remembered in this browser).
+const CX_RATES = [1, 1.5, 2];
+let cxRate = 1;
+try { const r = +localStorage.getItem("prata.rate"); if (CX_RATES.includes(r)) cxRate = r; } catch (_) {}
+function cxApplyRate() {
+  audio.defaultPlaybackRate = cxRate; audio.playbackRate = cxRate;
+  const b = $("cxRate"), lbl = String(cxRate).replace(".", ",") + "×";
+  b.textContent = lbl; b.setAttribute("aria-label", "Uppspelningshastighet " + lbl); b.classList.toggle("on", cxRate !== 1);
+}
+$("cxRate").onclick = () => {
+  cxRate = CX_RATES[(CX_RATES.indexOf(cxRate) + 1) % CX_RATES.length];
+  try { localStorage.setItem("prata.rate", String(cxRate)); } catch (_) {}
+  cxApplyRate();
+};
+audio.addEventListener("loadedmetadata", () => { if (audio.playbackRate !== cxRate) cxApplyRate(); });
+$("cxBack").onclick = () => seekTo(audio.currentTime - 15, false);
+$("cxFwd").onclick = () => seekTo(audio.currentTime + 15, false);
+cxApplyRate();
+
+// --- cx: share ---
+// Dela: the system share sheet with the transcript text; otherwise copy it.
+$("cxShare").onclick = async () => {
+  const text = (lastJob && lastJob.text || "").trim(), btn = $("cxShare");
+  if (!text) return;
+  const title = (curNote && curNote.title) || $("resTitle").textContent || "Prata";
+  if (navigator.share) {
+    try { await navigator.share({ title, text }); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }   // user closed the sheet
+  }
+  copyText(text, btn, "Kopierad ✓");
+};
+// --- cx: end ---
 
 // ------------------------------------------------------------ init
 if (!recSupported) {
