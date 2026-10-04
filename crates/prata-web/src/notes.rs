@@ -274,9 +274,8 @@ impl Store {
             .values()
             .filter_map(|n| {
                 let text = n.text();
-                let snippet;
-                if terms.is_empty() {
-                    snippet = text.chars().take(160).collect::<String>() + if text.chars().count() > 160 { "…" } else { "" };
+                let snippet = if terms.is_empty() {
+                    text.chars().take(160).collect::<String>() + if text.chars().count() > 160 { "…" } else { "" }
                 } else {
                     let hay = format!("{}\n{}\n{}", n.title, text, n.summary.as_deref().unwrap_or("")).to_lowercase();
                     if !terms.iter().all(|t| hay.contains(t.as_str())) {
@@ -285,11 +284,11 @@ impl Store {
                     // snippet around the first term found in the transcript (lowercasing
                     // can change byte lengths; fall back to the start then)
                     let lt = text.to_lowercase();
-                    snippet = match terms.iter().find_map(|t| lt.find(t.as_str()).map(|i| (i, t.len()))) {
+                    match terms.iter().find_map(|t| lt.find(t.as_str()).map(|i| (i, t.len()))) {
                         Some((i, l)) if lt.len() == text.len() && text.is_char_boundary(i) => snippet_at(&text, i, l),
                         _ => text.chars().take(160).collect(),
-                    };
-                }
+                    }
+                };
                 Some((
                     n.created,
                     n.id.clone(),

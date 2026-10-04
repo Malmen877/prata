@@ -317,7 +317,7 @@ fn parse_ts(s: Option<&str>) -> Option<i64> {
 fn parse_stamp(line: &str) -> Option<(f64, &str)> {
     let rest = line.strip_prefix('[')?;
     let close = rest.find(']')?;
-    let inner = rest[..close].split(|c: char| c == ' ' || c == '-' || c == '–').next()?.trim();
+    let inner = rest[..close].split([' ', '-', '–']).next()?.trim();
     let parts: Vec<&str> = inner.split(':').collect();
     if !(2..=3).contains(&parts.len()) {
         return None;
@@ -977,7 +977,7 @@ mod tests {
 
     fn store() -> (tempfile::TempDir, Store) {
         let d = tempfile::tempdir().unwrap();
-        let s = Store::open(&d.path().join("notes")).unwrap();
+        let s = Store::open(d.path().join("notes")).unwrap();
         (d, s)
     }
 
@@ -1025,7 +1025,7 @@ mod tests {
         assert_eq!(st.len(), 3);
         // a fresh Store (restart) still dedupes
         drop(st);
-        let st = Store::open(&_d.path().join("notes")).unwrap();
+        let st = Store::open(_d.path().join("notes")).unwrap();
         let r3 = sync(&c, &st).await;
         assert_eq!((r3.new, r3.unchanged), (0, 3));
         assert_eq!(st.len(), 3);
@@ -1079,7 +1079,7 @@ mod tests {
         assert!(st.find_klang("conv_a1").is_none());
         // survives a restart; the tombstone file isn't treated as junk
         drop(st);
-        let st = Store::open(&d.path().join("notes")).unwrap();
+        let st = Store::open(d.path().join("notes")).unwrap();
         assert!(st.klang_deleted("conv_a1"));
         assert_eq!(sync(&c, &st).await.new, 0);
         assert!(d.path().join("notes").join(crate::notes::KLANG_TOMBSTONES).exists());

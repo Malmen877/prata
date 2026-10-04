@@ -80,11 +80,11 @@ impl std::fmt::Display for FetchError {
 impl std::error::Error for FetchError {}
 
 pub fn human_dur(s: u64) -> String {
-    if s >= 3600 && s % 3600 == 0 {
+    if s >= 3600 && s.is_multiple_of(3600) {
         format!("{} h", s / 3600)
     } else if s >= 3600 {
         format!("{} h {} min", s / 3600, s % 3600 / 60)
-    } else if s >= 60 && s % 60 == 0 {
+    } else if s >= 60 && s.is_multiple_of(60) {
         format!("{} min", s / 60)
     } else if s >= 60 {
         format!("{} min {} s", s / 60, s % 60)
@@ -257,7 +257,7 @@ fn check_url_shape(u: &url::Url) -> Result<(), FetchError> {
     }
     match u.host() {
         None => Err(FetchError::InvalidUrl),
-        Some(url::Host::Domain(d)) if d.is_empty() => Err(FetchError::InvalidUrl),
+        Some(url::Host::Domain("")) => Err(FetchError::InvalidUrl),
         _ => Ok(()),
     }
 }
@@ -270,10 +270,10 @@ pub async fn check_host(u: &url::Url, policy: NetPolicy) -> Result<Vec<SocketAdd
         Some(url::Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
         Some(url::Host::Domain(d)) => {
             let d = d.trim_end_matches('.');
-            if d.eq_ignore_ascii_case("localhost") || d.to_ascii_lowercase().ends_with(".localhost") {
-                if !policy.allows_loopback() {
-                    return Err(FetchError::Blocked);
-                }
+            if (d.eq_ignore_ascii_case("localhost") || d.to_ascii_lowercase().ends_with(".localhost"))
+                && !policy.allows_loopback()
+            {
+                return Err(FetchError::Blocked);
             }
             tokio::time::timeout(Duration::from_secs(10), tokio::net::lookup_host((d, port)))
                 .await

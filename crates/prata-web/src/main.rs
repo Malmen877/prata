@@ -390,7 +390,7 @@ fn parse_json(s: &str, duration: f64) -> Option<Vec<Segment>> {
         return from_value(&v);
     }
     // JSON may be preceded by log lines; try from first '{' / '['
-    if let Some(i) = trimmed.find(|c| c == '{' || c == '[') {
+    if let Some(i) = trimmed.find(['{', '[']) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&trimmed[i..]) {
             if let Some(r) = from_value(&v) {
                 return Some(r);
@@ -1098,7 +1098,7 @@ async fn transcribe_job(st: &St, id: &str, input: &Path, wav: &Path, model: &str
                     let msg = format!("prata misslyckades, faller tillbaka på Python: {e}");
                     eprintln!("[job {id}] {msg}");
                     update(st, id, |j| j.log_tail.push(msg)).await;
-                    run_python(st, id, wav, model, dur).await.map(|(s, f)| (s, f))
+                    run_python(st, id, wav, model, dur).await
                 }
             },
             _ => run_python(st, id, wav, model, dur).await,

@@ -186,7 +186,9 @@ fn load_audio(path: &Path) -> Result<Vec<f32>> {
     }
     let pcm: Vec<f32> = out
         .stdout
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect();
     if pcm.is_empty() {
@@ -260,7 +262,7 @@ impl Decoder {
                 for i in 0..self.eot { mask[i as usize] = ninf; }
             }
         }
-        if let Some(&last) = sampled.iter().filter(|&&t| t >= tb).last() {
+        if let Some(&last) = sampled.iter().rfind(|&&t| t >= tb) {
             let lo = if last_ts && !pen_ts { last } else { last + 1 };
             for i in tb..lo.min(v) { mask[i as usize] = ninf; }
         }
@@ -406,7 +408,7 @@ impl Decoder {
                 logits[..eot].iter_mut().for_each(|x| *x = ninf);
             }
         }
-        if let Some(&last) = sampled.iter().filter(|&&t| t as usize >= tb).last() {
+        if let Some(&last) = sampled.iter().rfind(|&&t| t as usize >= tb) {
             let lo = if last_ts && !pen_ts { last } else { last + 1 } as usize;
             if lo > tb {
                 logits[tb..lo.min(v)].iter_mut().for_each(|x| *x = ninf);

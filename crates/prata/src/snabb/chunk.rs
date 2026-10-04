@@ -131,8 +131,8 @@ mod tests {
         let total = 10_000; // 100 s
         let mut db = vec![-20.0f32; total];
         // pauses at 27 s and 55 s
-        for f in 2690..2720 { db[f] = -70.0; }
-        for f in 5480..5520 { db[f] = -70.0; }
+        db[2690..2720].fill(-70.0);
+        db[5480..5520].fill(-70.0);
         let ws = plan(total, &db, &ChunkOpts::default());
         assert!(ws.len() >= 3);
         assert!((2690..2720).contains(&ws[0].keep_to), "{:?}", ws[0]);
@@ -154,7 +154,7 @@ mod tests {
         let v = tiny_vocab();
         let t = |id: u32, s: f64| TimedTok { id, start: s, end: s + 0.1 };
         let total = 6000;
-        let ws = vec![
+        let ws = [
             Window { start: 0, end: 3500, keep_from: 0, keep_to: 3000 },
             Window { start: 2500, end: 6000, keep_from: 3000, keep_to: 6000 },
         ];
