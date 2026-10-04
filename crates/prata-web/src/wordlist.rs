@@ -145,7 +145,7 @@ impl Rules {
             .flat_map(|e| e.wrong.iter().map(move |x| (lower(&clean(x)).chars().collect::<Vec<_>>(), e.right.clone())))
             .filter(|(p, _)| !p.is_empty())
             .collect();
-        v.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        v.sort_by_key(|r| std::cmp::Reverse(r.0.len()));
         Rules(v)
     }
 
