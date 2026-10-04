@@ -120,12 +120,13 @@ console.log("ui recording watchdog tests: ok");
 const em = /\/\/ --- cx: eta ---\n([\s\S]*?)\/\/ --- cx: notify ---/.exec(html);
 assert.ok(em, "cx: eta block not found");
 const ectx = {};
-vm.runInNewContext(pm[1] + em[1] + "\nconst _e = cxEta; this.cxEta = j => _e(j).replace(/\\u00a0/g, ' '); this.cxEtaText = cxEtaText;", ectx);
+vm.runInNewContext(pm[1] + em[1] + "\nconst _e = cxEta; this.cxEta = j => _e(j).replace(/\\u00a0/g, ' '); this.cxEtaText = cxEtaText; this.cxEtaRaw = _e;", ectx);
 const ej = (pct, t, extra = {}) => ({ id: "j1", status: "running", elapsed_s: t, audio_duration: 600, progress_pct: pct, log_tail: [], ...extra });
 assert.equal(ectx.cxEta(ej(10, 10)), "");          // first sample: nothing yet
 assert.equal(ectx.cxEta(ej(12, 13)), "");          // too little progress: still hidden
 assert.equal(ectx.cxEta(ej(30, 30)), " · ca 1 min kvar");   // 20 % in 20 s -> 70 s left
 assert.match(ectx.cxEta(ej(40, 40)), /^ · (ca 1 min|under 1 min) kvar$/);
+assert.match(ectx.cxEtaRaw(ej(45, 45)), /^\u00a0· (ca|under)\u00a0[^ ]*kvar$/);   // dot sticks to the text before; the only break is after it
 assert.equal(ectx.cxEta(ej(40, 40, { status: "done" })), "");
 assert.equal(ectx.cxEta(ej(50, 5, { id: "j2", log_tail: ["[info] downloading encoder-model.int8.onnx: 50% of 630 MB"], progress_pct: undefined })), "");
 assert.equal(ectx.cxEtaText(30), "under 1 min kvar");

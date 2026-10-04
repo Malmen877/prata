@@ -1931,7 +1931,8 @@ function cxEta(j) {
   if (j.status === "done" || j.status === "error") { cxEtaState.delete(j.id); return ""; }
   let st = cxEtaState.get(j.id); if (!st) cxEtaState.set(j.id, st = { t0: null, p0: 0, last: null });
   const left = cxEtaCalc(j, st);
-  return left == null ? "" : " ·\u00a0" + cxEtaText(left).replace(/ /g, "\u00a0");   // wraps as one unit on phones
+  // "\u00a0· " keeps the dot on the line before; the phrase itself never splits (breaks as one unit on phones)
+  return left == null ? "" : "\u00a0· " + cxEtaText(left).replace(/ /g, "\u00a0");
 }
 
 // --- cx: notify ---
