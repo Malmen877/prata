@@ -2,6 +2,10 @@
 
 ## Features
 - Record from the microphone or upload a file (wav, mp3, m4a, ogg, flac, opus, webm, mp4 – anything ffmpeg reads)
+- **Safe recording:** the recording is saved in the browser while you record; after a crash or reload, **Återställ
+  inspelning** brings it back. A watchdog warns when the mic hears nothing, stops delivering audio, or was paused
+  because the screen locked (iPhone)
+- **Queue:** pick or drop several files at once; cancel a running job, retry or remove failed ones
 - **Transcribe from a link:** paste a YouTube/SVT Play/podcast page (needs [yt-dlp](usage.md#transcribe-from-a-link)) or a direct link to an audio/video file
 - Transcript with segment timestamps, a waveform player, click-to-seek timestamps, search and copy
 - Downloads: `.txt`, `.txt` with timestamps, `.srt` subtitles, `.json`

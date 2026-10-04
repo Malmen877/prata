@@ -3,7 +3,14 @@
 HTTP API: `POST /api/jobs` (multipart `file`, `model`) → `{id}`; `POST /api/jobs/url` (`{"url": "…", "model": "small"}`)
 → `{id}` or `400 {error}` for an invalid/blocked link; `GET /api/jobs/{id}` (status `downloading|queued|converting|running|done|error`,
 `download_pct`, `model_download_pct` / `model_download_file` while a model is downloaded on first use, segments, `note_id` when done, `error_user` with a readable message);
-`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`; `GET /api/info` (includes `version`, `default_model` and `models`: id, label,
+`GET /api/jobs/{id}/{txt|txt-ts|srt|json}`;
+`GET /api/jobs?ids=a,b` (compact list without segments, oldest first; all jobs without `ids`);
+`POST /api/jobs/{id}/cancel` (queued, downloading or running → status `error` with `cancelled: true`; ffmpeg/prata are
+stopped; `409` if the job already finished or is being saved); `POST /api/jobs/{id}/retry` (a failed or cancelled job runs
+again under the same id → `202`; `409` if the upload is gone); `DELETE /api/jobs/{id}` (cancels if needed and forgets the
+job and its kept upload → `204`; a finished job's note stays). Job JSON also has `cancelled` and `retryable`. Jobs that
+were queued or running when prata-web stopped come back after a restart as failed and retryable
+(records in `<work_dir>/jobs/`, kept for 7 days); `GET /api/info` (includes `version`, `default_model` and `models`: id, label,
 description, availability, download size, whether it's downloaded, license); `GET /api/model-hint?duration_s=S&model=M`
 (`{suggest: "snabb"|null, reason}`); `GET /api/health` (`{ok, prata, ffmpeg, yt_dlp: {available, version}}`).
 

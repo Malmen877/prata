@@ -8,6 +8,9 @@ timestamped transcript (.txt, .srt, .json). It runs [KB-Whisper](https://hugging
 
 ![Prata – model picker with Snabb, Standard and Large](docs/screenshot.png)
 
+**New in 0.7.0:** recordings survive a crash or reload (**Återställ inspelning**), a mic watchdog, a queue for several
+files with cancel and retry, an Ordlista for names, and time left while transcribing. See the [Changelog](CHANGELOG.md).
+
 ## Install
 
 ```bash

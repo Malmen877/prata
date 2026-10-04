@@ -4,6 +4,34 @@ All notable changes to Prata (the `prata` CLI, `prata-web` and the `prata-app` n
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-04
+
+### Added
+- **Safer recording**: every second of a recording is also saved in the browser (IndexedDB). After a crash, reload or
+  closed tab the record view offers **Återställ inspelning** (transcribe it, download it, or throw it away); the copy is
+  cleared once the upload is accepted. The screen stays on while recording (Wake Lock), closing the tab during a
+  recording or upload asks first, and the mic is released as soon as you stop.
+- **Mic watchdog** on the record screen: a quiet warning when no sound has been heard for 10 s, no new audio data
+  arrives, the mic is muted or disconnected, or audio is missing after the screen was locked ("Inspelningen pausades
+  när skärmen låstes – ca 12 s saknas").
+- **Queue control**: several files at once go into a visible queue under the progress card; **Avbryt** stops a running
+  job (ffmpeg/prata are killed), failed or cancelled jobs get **Försök igen** and **Ta bort**. API:
+  `GET /api/jobs?ids=`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/retry`, `DELETE /api/jobs/{id}`.
+- Jobs that were queued or running when prata-web stopped are marked as failed at the next start and can be retried
+  (the upload is kept for 7 days in the work folder).
+- Web UI: estimated time left in the progress text ("ca 2 min kvar"), shown once progress is steady.
+- Web UI: −15/+15 s and 1×/1,5×/2× playback speed in the player (speed is remembered), and a Dela icon that opens the
+  share sheet or copies the transcript.
+- **Ordlista**: map a correct form to known wrong forms (e.g. "OKDacke" ← "OK Dacke"); applied to new transcriptions
+  (whole words, case-insensitive, åäö-aware, longest match first). Edited under "Ordlista" in the record view; stored
+  in ~/.prata/wordlist.json (GET/PUT /api/wordlist).
+- Web UI: "✓ Klar – <titel>" in the tab title when a transcription finishes, and a desktop notification if the tab is
+  in the background (permission asked once, on the first transcription).
+
+### Fixed
+- Files with several audio streams (Voice Memos with Spatial Audio, some videos) are transcribed from the first audio
+  stream (`-map 0:a:0`) instead of the one ffmpeg would pick.
+
 ## [0.6.1] - 2026-10-02
 
 The first published release with Snabb. 0.6.0 was never released (no tag, GitHub Release or npm package).
