@@ -995,6 +995,7 @@ async function poll() {
     if (cxQAdopt()) { await refreshNotes(); cxJobDone(j); return; }   // cx: queue – more files waiting: stay here
     await refreshNotes();
     cxJobDone(j);   // cx: notify
+    if (cxQ.some(x => x.status === "error")) { lastJob = j; return; }   // cx: queue – cancelled/failed rows still listed: stay here
     if (j.note_id) go("#/notes/" + j.note_id);           // lands in Notes and opens
     else { lastJob = j; showJobResult(j); }
   }
