@@ -348,6 +348,25 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
 .cx-pb:focus-visible{outline:3px solid var(--ts);outline-offset:1px}
 .cx-pb.on{color:var(--ink);background:var(--surface-2)}
 @media (max-width:520px){.player{flex-wrap:wrap;row-gap:4px}.cx-pc{order:9;width:100%;justify-content:center;gap:14px}.cx-pb{height:36px;min-width:52px}}
+/* cx: wordlist */
+.cx-wl summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;min-height:32px;font-size:13px;font-weight:500;color:var(--ink-3);border-radius:var(--r-sm)}
+.cx-wl summary::-webkit-details-marker{display:none}
+.cx-wl summary::before{content:"";width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s}
+.cx-wl[open] summary::before{transform:rotate(45deg) translate(-1px,-1px)}
+.cx-wl summary:hover{color:var(--ink-2)}
+.cx-wl summary:focus-visible{outline:3px solid var(--ts);outline-offset:2px}
+.cx-wl-card{padding:18px 20px;margin-top:8px}
+.cx-wl-card>.meta{margin:0 0 6px}
+.cx-wl-head,.cx-wl-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) 36px;gap:8px;align-items:center}
+.cx-wl-head{font-size:12px;color:var(--ink-3);margin-top:10px}
+.cx-wl-row{margin-top:8px}
+.cx-wl-row input{min-width:0;height:40px;padding:0 12px;border:1px solid var(--line-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);font-size:15px}
+.cx-wl-row input:focus{outline:3px solid var(--ts);outline-offset:0}
+.cx-wl-row .icon-btn{margin-top:0}
+.cx-wl-row .cx-wl-r{grid-column:1;grid-row:1}.cx-wl-row .cx-wl-w{grid-column:2;grid-row:1}.cx-wl-row .cx-wl-del{grid-column:3;grid-row:1}
+.cx-wl-act{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.cx-wl-msg.bad{color:var(--err)}
+@media (max-width:640px){.cx-wl-head{display:none}.cx-wl-row{grid-template-columns:minmax(0,1fr) 36px;padding-top:4px}.cx-wl-row .cx-wl-del{grid-column:2;grid-row:1}.cx-wl-row .cx-wl-w{grid-column:1/-1;grid-row:2}.cx-wl-row input{font-size:16px;height:44px}.cx-wl-card{padding:16px}}
 /* --- cx: end --- */
 </style>
 </head>
@@ -449,6 +468,22 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
   <div class="recent-head"><h3 id="recentH">Senaste anteckningar</h3><a href="#/notes">Visa alla</a></div>
   <div class="note-list" id="recentList"></div>
 </section>
+
+<section id="cxWlSec"><!-- cx: wordlist -->
+  <details class="cx-wl" id="cxWl">
+    <summary>Ordlista</summary>
+    <div class="card cx-wl-card">
+      <p class="meta">Rättar namn och ord som ofta blir fel. Gäller nya transkriberingar, skiftläge spelar ingen roll.</p>
+      <div class="cx-wl-head" aria-hidden="true"><span>Rätt form</span><span>Fel former (kommaseparerade)</span></div>
+      <div id="cxWlRows"></div>
+      <div class="cx-wl-act">
+        <button type="button" class="btn" id="cxWlAdd">Lägg till ord</button>
+        <button type="button" class="btn primary" id="cxWlSave">Spara</button>
+        <span class="meta cx-wl-msg" id="cxWlMsg" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
+</section>
 </div><!-- /viewRecord -->
 
 <div class="view hidden" id="viewNotes">
@@ -470,7 +505,8 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       <div style="min-width:0;flex:1 1 320px">
         <a class="back" href="#/notes" id="backBtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>Anteckningar</a>
         <div class="title-row" id="titleRow"><h2 id="resTitle" title="Tryck för att byta namn"></h2>
-          <button type="button" class="icon-btn" id="renameBtn" aria-label="Byt namn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button></div>
+          <button type="button" class="icon-btn" id="renameBtn" aria-label="Byt namn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
+          <button type="button" class="icon-btn" id="cxShare" aria-label="Dela" title="Dela"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M7 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg></button><!-- cx: share --></div>
         <form class="rename hidden" id="renameForm" autocomplete="off">
           <label class="sr-only" for="renameInput">Nytt namn</label><input id="renameInput" maxlength="200" enterkeyhint="done">
           <button type="submit" class="btn primary">Spara</button><button type="button" class="btn" id="renameCancel">Avbryt</button>
@@ -480,7 +516,6 @@ dialog::backdrop{background:rgba(11,11,12,.45)}
       </div>
       <div class="dls">
         <button type="button" class="btn primary" id="copy">Kopiera text</button>
-        <button type="button" class="btn" id="cxShare">Dela</button><!-- cx: share -->
         <a class="btn" id="dlTxt" download>.txt</a>
         <a class="btn" id="dlTxtTs" download>.txt <small>med tider</small></a>
         <a class="btn" id="dlSrt" download>.srt</a>
@@ -1888,7 +1923,7 @@ function cxEta(j) {
   if (j.status === "done" || j.status === "error") { cxEtaState.delete(j.id); return ""; }
   let st = cxEtaState.get(j.id); if (!st) cxEtaState.set(j.id, st = { t0: null, p0: 0, last: null });
   const left = cxEtaCalc(j, st);
-  return left == null ? "" : " · " + cxEtaText(left);
+  return left == null ? "" : " ·\u00a0" + cxEtaText(left).replace(/ /g, "\u00a0");   // wraps as one unit on phones
 }
 
 // --- cx: notify ---
@@ -1905,7 +1940,29 @@ function cxJobDone(j) {
   clearTimeout(cxTitleT);
   document.title = "✓ Klar – " + title;
   if (!document.hidden && document.hasFocus()) cxTitleT = setTimeout(cxResetTitle, 6000);   // seen already
+  if (document.hidden && cxCanNotify() && Notification.permission === "granted") {
+    try {
+      const n = new Notification("Transkriberingen är klar", { body: title, tag: "prata-done", icon: "/icon-192.png" });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (_) {}   // e.g. Android Chrome only allows notifications from a service worker
+  }
 }
+// Desktop notification. Permission is asked once, on the first tap that starts a transcription
+// (Transkribera, the link's Transkribera/Enter, or stopping a recording); never on load and never
+// again after the prompt was answered or dismissed.
+function cxCanNotify() { return "Notification" in window && window.isSecureContext; }
+function cxAskNotify() {
+  if (!cxCanNotify() || Notification.permission !== "default") return;
+  try { if (localStorage.getItem("prata.notify.asked")) return; localStorage.setItem("prata.notify.asked", "1"); } catch (_) { return; }
+  try { const p = Notification.requestPermission(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest && e.target.closest("#go, #linkGo, #rec");
+  if (!t || t.disabled) return;
+  if (t.id === "rec" && !(rec && rec.state === "recording")) return;   // the tap that stops and transcribes
+  cxAskNotify();
+}, true);
+$("linkForm").addEventListener("submit", cxAskNotify, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && document.title !== cxBaseTitle) cxTitleT = setTimeout(cxResetTitle, 1500); });
 window.addEventListener("focus", () => { if (document.title !== cxBaseTitle) { clearTimeout(cxTitleT); cxTitleT = setTimeout(cxResetTitle, 1500); } });
 
@@ -1930,17 +1987,70 @@ $("cxFwd").onclick = () => seekTo(audio.currentTime + 15, false);
 cxApplyRate();
 
 // --- cx: share ---
-// Dela: the system share sheet with the transcript text; otherwise copy it.
+// Dela (icon next to the rename pencil): the system share sheet with the transcript text;
+// otherwise copy it, confirmed as "Kopierat ✓" on the Kopiera text button.
 $("cxShare").onclick = async () => {
-  const text = (lastJob && lastJob.text || "").trim(), btn = $("cxShare");
+  const text = (lastJob && lastJob.text || "").trim(), btn = $("copy");
   if (!text) return;
   const title = (curNote && curNote.title) || $("resTitle").textContent || "Prata";
   if (navigator.share) {
     try { await navigator.share({ title, text }); return; }
     catch (e) { if (e && e.name === "AbortError") return; }   // user closed the sheet
   }
-  copyText(text, btn, "Kopierad ✓");
+  copyText(text, btn, "Kopierat ✓");
 };
+// --- cx: wordlist ---
+// Ordlista: GET/PUT /api/wordlist. Loaded the first time the section is opened.
+let cxWlLoaded = false, cxWlMsgT = null;
+function cxWlMsg(text, bad) {
+  const m = $("cxWlMsg"); clearTimeout(cxWlMsgT);
+  m.textContent = text || ""; m.classList.toggle("bad", !!bad);
+  if (text && !bad) cxWlMsgT = setTimeout(() => { m.textContent = ""; }, 2500);
+}
+function cxWlRow(e) {
+  const d = document.createElement("div"); d.className = "cx-wl-row";
+  d.innerHTML = `<input class="cx-wl-r" aria-label="Rätt form" placeholder="Rätt form" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100">` +
+    `<button type="button" class="icon-btn cx-wl-del" aria-label="Ta bort ordet"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>` +
+    `<input class="cx-wl-w" aria-label="Fel former, kommaseparerade" placeholder="Fel former, t.ex. OK Dacke, okej Dacke" autocomplete="off" autocapitalize="off" spellcheck="false">`;
+  d.querySelector(".cx-wl-r").value = e.right || "";
+  d.querySelector(".cx-wl-w").value = (e.wrong || []).join(", ");
+  return d;
+}
+function cxWlRender(entries) {
+  const box = $("cxWlRows"); box.innerHTML = "";
+  (entries.length ? entries : [{}]).forEach(e => box.appendChild(cxWlRow(e)));
+}
+function cxWlRead() {
+  return [...document.querySelectorAll("#cxWlRows .cx-wl-row")].map(r => ({
+    right: r.querySelector(".cx-wl-r").value.trim(),
+    wrong: r.querySelector(".cx-wl-w").value.split(",").map(x => x.trim()).filter(Boolean),
+  })).filter(e => e.right || e.wrong.length);
+}
+async function cxWlLoad() {
+  try {
+    const r = await fetch("/api/wordlist"); const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
+    cxWlRender(j.entries || []); cxWlLoaded = true; cxWlMsg("");
+  } catch (_) { cxWlRender([]); cxWlMsg("Kunde inte läsa ordlistan.", true); }
+}
+$("cxWl").addEventListener("toggle", () => { if ($("cxWl").open && !cxWlLoaded) cxWlLoad(); });
+$("cxWlAdd").onclick = () => { const row = cxWlRow({}); $("cxWlRows").appendChild(row); row.querySelector("input").focus(); };
+$("cxWlRows").addEventListener("click", e => {
+  const del = e.target.closest(".cx-wl-del"); if (!del) return;
+  del.closest(".cx-wl-row").remove();
+  if (!$("cxWlRows").children.length) $("cxWlRows").appendChild(cxWlRow({}));
+  cxWlMsg("Inte sparat än");
+});
+$("cxWlRows").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("input")) { e.preventDefault(); $("cxWlSave").click(); } });
+$("cxWlSave").onclick = async () => {
+  const btn = $("cxWlSave"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/wordlist", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ entries: cxWlRead() }) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || "Kunde inte spara.");
+    cxWlRender(j.entries || []); cxWlMsg("Sparat ✓");
+  } catch (e) { cxWlMsg(e.message || "Kunde inte spara.", true); }
+  btn.disabled = false;
+};
+
 // --- cx: end ---
 
 // ------------------------------------------------------------ init

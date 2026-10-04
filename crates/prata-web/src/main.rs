@@ -11,6 +11,7 @@ mod fetch;
 mod hint;
 mod klang;
 mod notes;
+mod wordlist;
 
 use std::{
     collections::HashMap,
@@ -1105,6 +1106,7 @@ async fn transcribe_job(st: &St, id: &str, input: &Path, wav: &Path, model: &str
         let (segs, fmt) = result?;
         // past this point the job is saved as a note and can no longer be cancelled
         st.cancels.lock().unwrap().remove(id);
+        let segs = wordlist::apply_to_new(&st.cfg.notes_dir, segs); // cx: wordlist
         let text = to_txt(&segs, false);
         let _ = tokio::fs::remove_file(wav).await;
         // Save as a note (keeps the original audio for playback).
@@ -1846,6 +1848,8 @@ fn app(st: St) -> Router {
         .route("/api/notes", get(list_notes))
         .route("/api/notes/{id}", get(get_note).patch(patch_note).delete(delete_note))
         .route("/api/notes/{id}/audio", get(note_audio))
+        .route("/api/wordlist", get(wordlist::get_wordlist).put(wordlist::put_wordlist)) // cx: wordlist
+        .route("/api/notes/{id}/wordlist", post(wordlist::apply_to_note)) // cx: wordlist
         .route("/api/notes/{id}/{kind}", get(note_download))
         .layer(DefaultBodyLimit::max(limit))
         .with_state(st)
