@@ -28,7 +28,7 @@ Package a release archive the same way CI does:
 
 ```bash
 scripts/package.sh darwin-arm64        # → dist/prata-v<version>-darwin-arm64.tar.gz (+ .sha256)
-PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.6.1-darwin-arm64.tar.gz node npm/bin/prata.js
+PRATA_LOCAL_ASSET=$PWD/dist/prata-v0.7.0-darwin-arm64.tar.gz node npm/bin/prata.js
 ```
 
 ## Repository layout

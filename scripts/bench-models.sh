@@ -20,7 +20,7 @@
 #   --extra "ARGS"   extra arguments for every prata run, e.g. "--vad off"
 #
 # Example (Mac mini):
-#   scripts/bench-models.sh --bin ~/.prata/0.6.1/prata --audio ~/eval/clips --refs ~/eval/refs \
+#   scripts/bench-models.sh --bin ~/.prata/0.7.0/prata --audio ~/eval/clips --refs ~/eval/refs \
 #       --models "snabb small large" --out ~/eval/results-$(date +%Y%m%d)
 #
 # Safety: everything is written to a fresh `mktemp -d` folder (plus --out if given). The script only runs
