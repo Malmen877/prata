@@ -648,10 +648,18 @@ struct Job {
     /// The uploaded file in work_dir; kept after a failure so the job can be retried
     #[serde(skip)]
     input: Option<PathBuf>,
+    /// Creation time in ms and a process-wide counter: a stable order for jobs created in the same second
+    #[serde(skip)]
+    created_ms: u64,
+    #[serde(skip)]
+    seq: u64,
 }
+
+static JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl Job {
     fn new(id: &str, filename: &str, model: &str, status: &str, progress: &str) -> Job {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
         Job {
             id: id.into(),
             filename: filename.into(),
@@ -664,7 +672,7 @@ impl Job {
             log_tail: vec![],
             error: None,
             audio_duration: None,
-            created: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            created: now.as_secs(),
             elapsed_s: 0.0,
             segments: vec![],
             text: None,
@@ -681,6 +689,8 @@ impl Job {
             cancelled: false,
             retryable: false,
             input: None,
+            created_ms: now.as_millis() as u64,
+            seq: JOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
 
@@ -709,6 +719,7 @@ struct JobRec {
     model: String,
     status: String,
     created: u64,
+    created_ms: u64,
     source_url: Option<String>,
     media_title: Option<String>,
     input: Option<PathBuf>,
@@ -730,6 +741,7 @@ async fn persist_job(st: &St, id: &str) {
         model: j.model.clone(),
         status: j.status.clone(),
         created: j.created,
+        created_ms: j.created_ms,
         source_url: j.source_url.clone(),
         media_title: j.media_title.clone(),
         input: j.input.clone(),
@@ -805,6 +817,7 @@ fn sweep_jobs(work_dir: &Path, now: u64) -> Vec<Job> {
         }
         let mut j = Job::new(&rec.id, &rec.filename, &rec.model, "error", "Fel");
         j.created = rec.created;
+        j.created_ms = if rec.created_ms > 0 { rec.created_ms } else { rec.created * 1000 };
         j.source_url = rec.source_url;
         j.media_title = rec.media_title;
         j.input = rec.input;
@@ -814,7 +827,7 @@ fn sweep_jobs(work_dir: &Path, now: u64) -> Vec<Job> {
         j.max_duration = rec.max_duration;
         out.push(j);
     }
-    out.sort_by_key(|j| j.created);
+    out.sort_by(|a, b| a.created_ms.cmp(&b.created_ms).then_with(|| a.id.cmp(&b.id)));
     out
 }
 
@@ -1475,7 +1488,7 @@ async fn list_jobs(State(st): State<St>, Query(q): Query<JobsQ>) -> Response {
     let want: Option<Vec<&str>> = q.ids.as_deref().map(|s| s.split(',').map(str::trim).filter(|s| !s.is_empty()).collect());
     let jobs = st.jobs.lock().await;
     let mut v: Vec<&Job> = jobs.values().filter(|j| want.as_ref().is_none_or(|w| w.contains(&j.id.as_str()))).collect();
-    v.sort_by(|a, b| a.created.cmp(&b.created).then_with(|| a.id.cmp(&b.id)));
+    v.sort_by_key(|j| (j.created_ms, j.seq));
     let out: Vec<serde_json::Value> = v
         .into_iter()
         .map(|j| {
@@ -2286,6 +2299,26 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
         std::process::Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
     }
 
+    #[tokio::test]
+    async fn list_jobs_keeps_creation_order_within_a_second() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state_with(tmp.path(), fetch::NetPolicy::strict(), |_| {});
+        let ids: Vec<String> = ["zz", "mm", "aa", "qq", "bb"].iter().map(|s| s.to_string()).collect();
+        {
+            let mut jobs = st.jobs.lock().await;
+            for id in &ids {
+                let mut j = Job::new(id, "x.m4a", "small", "queued", "");
+                j.created = 1_000; // same second, same ms: the counter decides
+                j.created_ms = 1_000_000;
+                jobs.insert(id.clone(), j);
+            }
+        }
+        let (_, _, l) = call(&app(st), "GET", "/api/jobs", None, None).await;
+        let l: serde_json::Value = serde_json::from_slice(&l).unwrap();
+        let got: Vec<&str> = l.as_array().unwrap().iter().map(|j| j["id"].as_str().unwrap()).collect();
+        assert_eq!(got, ["zz", "mm", "aa", "qq", "bb"]);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn jobs_cancel_retry_delete_and_list() {
@@ -2311,6 +2344,7 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej igen.\n'
         let l: serde_json::Value = serde_json::from_slice(&l).unwrap();
         assert_eq!(l.as_array().unwrap().len(), 2, "{l}");
         assert!(l[0].get("segments").is_none());
+        assert_eq!((l[0]["id"].as_str(), l[1]["id"].as_str()), (Some(a.as_str()), Some(b.as_str())), "creation order");
 
         // cancel the queued job, then the running one: prata is killed, the worker carries on
         let (c, _, _) = call(&app, "POST", &format!("/api/jobs/{b}/cancel"), None, None).await;
