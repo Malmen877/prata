@@ -165,6 +165,7 @@ h3{font-size:13px;font-weight:500;color:var(--ink-3);margin:0 0 12px}
 /* --- cx: queue --- */
 .proc .jobctl{grid-column:1/-1;display:flex;justify-content:flex-end;margin-top:-2px}
 .proc .jobctl .btn,.q-row .btn{height:30px;padding:0 12px;font-size:13px}
+@media (pointer:coarse),(max-width:640px){.proc .jobctl .btn,.q-row .btn,.restore .btn{height:40px;padding:0 14px;font-size:14px}}   /* touch: same 40 px as the restore banner */
 .queue{margin-top:10px;display:flex;flex-direction:column;gap:6px}
 .q-head{margin:6px 2px 0}
 .q-row{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface)}
