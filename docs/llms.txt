@@ -1,0 +1,18 @@
+# Prata
+
+> Prata är gratis svensk tal-till-text som körs lokalt på Mac och Linux. Spela in eller släpp en ljudfil i webbläsaren och få en text med tidsstämplar – för intervjuer, möten och föreläsningar. Inget ljud lämnar datorn. Free, open-source (MIT), offline Swedish speech-to-text.
+
+- Installera: `npx prata-app@latest` (kräver Node.js 18+ och ffmpeg)
+- Plattformar: macOS Apple Silicon och Intel (Intel utan Snabb), Linux x64 med glibc 2.39+
+- Modeller: Snabb = Klang Pianissimo (KlangAI), Standard = KB-Whisper small (KBLab, förval), Large = KB-Whisper large
+- Funktioner: kö för flera filer, Ordlista för namn, säker inspelning med återställning, export .txt/.srt/.json, länkar via yt-dlp
+- Pris och licens: gratis, MIT; inget konto, ingen telemetri
+
+## Dokumentation
+
+- [README](https://github.com/Malmen877/prata#readme)
+- [Installation](https://github.com/Malmen877/prata/blob/main/docs/install.md)
+- [Modeller](https://github.com/Malmen877/prata/blob/main/docs/models.md)
+- [Benchmarks (tid och WER)](https://github.com/Malmen877/prata/blob/main/docs/benchmarks.md)
+- [Jämförelse med MacWhisper, Sagt, Aloud och Transkribera](https://github.com/Malmen877/prata/blob/main/docs/jamforelse.md)
+- [Changelog](https://github.com/Malmen877/prata/blob/main/CHANGELOG.md)

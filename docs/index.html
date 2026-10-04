@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prata – gratis svensk tal till text, offline på Mac och Linux</title>
+<meta name="description" content="Transkribera intervjuer och möten på svenska, gratis och helt lokalt. KB-Whisper och Klang Pianissimo på din egen dator – inget ljud laddas upp.">
+<link rel="canonical" href="https://malmen877.github.io/prata/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="sv_SE">
+<meta property="og:site_name" content="Prata">
+<meta property="og:title" content="Prata – gratis svensk tal till text, offline">
+<meta property="og:description" content="Transkribera intervjuer och möten på svenska, gratis och helt lokalt på din Mac eller Linux-dator. Inget ljud laddas upp.">
+<meta property="og:url" content="https://malmen877.github.io/prata/">
+<meta property="og:image" content="https://malmen877.github.io/prata/screenshot.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="800">
+<meta property="og:image:alt" content="Prata i webbläsaren med modellerna Snabb, Standard och Large">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="light dark">
+<style>
+:root{--fg:#1b1d21;--muted:#5b616b;--bg:#fff;--card:#f4f5f7;--line:#e2e4e8;--acc:#0b63ce}
+@media (prefers-color-scheme:dark){:root{--fg:#e8eaed;--muted:#a0a6b0;--bg:#121418;--card:#1c1f25;--line:#2c3038;--acc:#6aa8ff}}
+*{box-sizing:border-box}
+body{margin:0;font:17px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);background:var(--bg)}
+main{max-width:46rem;margin:0 auto;padding:2.5rem 1.25rem 4rem}
+h1{font-size:2.1rem;line-height:1.2;margin:0 0 .75rem}
+h2{font-size:1.35rem;margin:2.5rem 0 .75rem}
+h3{font-size:1.05rem;margin:1.25rem 0 .25rem}
+p,li{margin:.4rem 0}
+a{color:var(--acc)}
+.lead{font-size:1.15rem;color:var(--muted)}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font-size:1.05rem}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+img{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px;margin:1.5rem 0 .5rem}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{text-align:left;padding:.45rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+ul{padding-left:1.2rem}
+.small{font-size:.9rem;color:var(--muted)}
+footer{margin-top:3rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Prata",
+  "description": "Gratis svensk tal-till-text som körs lokalt på din Mac eller Linux-dator. Transkribera intervjuer och möten offline med KB-Whisper och Klang Pianissimo.",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "macOS, Linux",
+  "inLanguage": "sv",
+  "softwareVersion": "0.7.0",
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://malmen877.github.io/prata/",
+  "downloadUrl": "https://www.npmjs.com/package/prata-app",
+  "installUrl": "https://github.com/Malmen877/prata/blob/main/docs/install.md",
+  "codeRepository": "https://github.com/Malmen877/prata",
+  "screenshot": "https://malmen877.github.io/prata/screenshot.png",
+  "author": {"@type": "Person", "name": "Kevin Malmgren"},
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "SEK"}
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "Är Prata gratis?", "acceptedAnswer": {"@type": "Answer", "text": "Ja. Prata är gratis och öppen källkod under MIT-licensen. Det finns ingen betalversion, inget konto och ingen tidsgräns."}},
+    {"@type": "Question", "name": "Lämnar ljudet datorn?", "acceptedAnswer": {"@type": "Answer", "text": "Nej. Ljudet transkriberas på din egen dator. Nätet används bara för att ladda ner appen och modellerna första gången, och för länkar som du själv klistrar in. Det finns ingen telemetri."}},
+    {"@type": "Question", "name": "Fungerar Prata offline?", "acceptedAnswer": {"@type": "Answer", "text": "Ja. När appen och modellen är nedladdade fungerar transkriberingen utan internet."}},
+    {"@type": "Question", "name": "Vilka datorer fungerar Prata på?", "acceptedAnswer": {"@type": "Answer", "text": "Mac med Apple Silicon eller Intel (Snabb finns inte på Intel) och Linux x64 med glibc 2.39 eller senare, till exempel Ubuntu 24.04. Du behöver Node.js 18+ och ffmpeg. Från iPhone når du Prata på en Mac via Tailscale."}},
+    {"@type": "Question", "name": "Hur exakt är Prata?", "acceptedAnswer": {"@type": "Answer", "text": "På en svensk inspelning på 12,5 minuter var ordfelsfrekvensen (WER) 5,3 % med Snabb, 4,3 % med Standard och 4,6 % med Large. Metod och fler siffror finns i docs/benchmarks.md."}},
+    {"@type": "Question", "name": "Hur skiljer sig Prata från MacWhisper?", "acceptedAnswer": {"@type": "Answer", "text": "Prata är gratis med öppen källkod, gjord för svenska med KB-Whisper och Klang Pianissimo inbyggt, körs i webbläsaren och fungerar även på Linux. MacWhisper är en Mac-app för många språk med fler funktioner, som talarigenkänning och mötesinspelning, och en betald Pro-version. En jämförelse med källor finns i docs/jamforelse.md."}}
+  ]
+}
+</script>
+</head>
+<body>
+<main>
+<h1>Prata – gratis svensk tal till text, offline</h1>
+<p class="lead">Spela in eller släpp en ljudfil och få en text med tidsstämplar – för intervjuer, möten och föreläsningar. Allt körs på din egen Mac eller Linux-dator; inget ljud lämnar den.</p>
+
+<h2>Installera</h2>
+<pre><code>npx prata-app@latest</code></pre>
+<p>Kräver Node.js 18+ och ffmpeg (<code>brew install node ffmpeg</code> på Mac, <code>sudo apt install nodejs npm ffmpeg</code> på Ubuntu/Debian). Kommandot laddar ner Prata, startar den och öppnar webbläsaren. Mer: <a href="https://github.com/Malmen877/prata/blob/main/docs/install.md">installationsguiden</a>.</p>
+
+<img src="screenshot.png" width="1280" height="800" alt="Prata i webbläsaren: välj modell Snabb, Standard eller Large och spela in eller släpp en fil" loading="lazy" decoding="async">
+
+<h2>Det här får du</h2>
+<ul>
+<li><strong>Helt lokalt och gratis.</strong> Öppen källkod (MIT), inget konto, ingen molntjänst, ingen telemetri.</li>
+<li><strong>Tre modeller</strong> för svenska – välj mellan fart och precision:</li>
+</ul>
+<table>
+<thead><tr><th>I appen</th><th>Modell</th><th>12,5 min inspelning, Mac mini M4</th><th>WER</th></tr></thead>
+<tbody>
+<tr><td><strong>Snabb</strong></td><td>Klang Pianissimo (KlangAI)</td><td>23,8 s</td><td>5,3 %</td></tr>
+<tr><td><strong>Standard</strong></td><td>KB-Whisper small (KBLab)</td><td>133,1 s</td><td>4,3 %</td></tr>
+<tr><td><strong>Large</strong></td><td>KB-Whisper large (KBLab)</td><td>ej mätt (2,5 min: 119,5 s)</td><td>4,6 %</td></tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Ordlista</strong> för namn och facktermer: ange rätt stavning och de felstavningar som brukar dyka upp, så rättas nya transkriptioner automatiskt.</li>
+<li><strong>Kö för flera filer</strong>: släpp flera ljudfiler på en gång, avbryt ett pågående jobb, försök igen eller ta bort.</li>
+<li><strong>Säker inspelning</strong>: inspelningen sparas löpande i webbläsaren, och efter en krasch eller omladdning tar <em>Återställ inspelning</em> tillbaka den. En vakt varnar om mikrofonen inte hör något.</li>
+<li>Alla ljud- och videoformat som ffmpeg läser, och länkar till YouTube, SVT Play och poddar (med yt-dlp).</li>
+<li>Export till .txt, .txt med tidsstämplar, .srt (undertexter) och .json. Alla transkriptioner sparas som anteckningar med sökning.</li>
+</ul>
+
+<h2>Vanliga frågor</h2>
+<h3>Är Prata gratis?</h3>
+<p>Ja. Prata är gratis och öppen källkod under MIT-licensen. Det finns ingen betalversion, inget konto och ingen tidsgräns.</p>
+<h3>Lämnar ljudet datorn?</h3>
+<p>Nej. Ljudet transkriberas på din egen dator. Nätet används bara för att ladda ner appen och modellerna första gången, och för länkar som du själv klistrar in. Det finns ingen telemetri.</p>
+<h3>Fungerar Prata offline?</h3>
+<p>Ja. När appen och modellen är nedladdade fungerar transkriberingen utan internet.</p>
+<h3>Vilka datorer fungerar Prata på?</h3>
+<p>Mac med Apple Silicon eller Intel (Snabb finns inte på Intel) och Linux x64 med glibc 2.39 eller senare, till exempel Ubuntu 24.04. Du behöver Node.js 18+ och ffmpeg. Från iPhone når du Prata på en Mac via <a href="https://github.com/Malmen877/prata/blob/main/docs/iphone.md">Tailscale</a>.</p>
+<h3>Hur exakt är Prata?</h3>
+<p>På en svensk inspelning på 12,5 minuter var ordfelsfrekvensen (WER) 5,3 % med Snabb, 4,3 % med Standard och 4,6 % med Large. Metod och fler siffror: <a href="https://github.com/Malmen877/prata/blob/main/docs/benchmarks.md">benchmarks</a>.</p>
+<h3>Hur skiljer sig Prata från MacWhisper?</h3>
+<p>Prata är gratis med öppen källkod, gjord för svenska med KB-Whisper och Klang Pianissimo inbyggt, körs i webbläsaren och fungerar även på Linux. MacWhisper är en Mac-app för många språk med fler funktioner, som talarigenkänning och mötesinspelning, och en betald Pro-version. Se <a href="https://github.com/Malmen877/prata/blob/main/docs/jamforelse.md">jämförelsen med MacWhisper, Sagt, Aloud och Transkribera</a> (med källor).</p>
+
+<footer class="small">
+<p><a href="https://github.com/Malmen877/prata">Källkod på GitHub</a> · <a href="https://www.npmjs.com/package/prata-app">npm</a> · <a href="https://github.com/Malmen877/prata/blob/main/docs/jamforelse.md">Jämförelse</a> · <a href="https://github.com/Malmen877/prata/blob/main/CHANGELOG.md">Nyheter</a></p>
+<p>Prata är MIT © 2026 Kevin Malmgren. Snabb använder Klang Pianissimo av KlangAI (CC BY 4.0); KB-Whisper är av KBLab vid Kungliga biblioteket (Apache-2.0). Modellerna laddas ner från Hugging Face. Prata har ingen koppling till KBLab, KlangAI, NVIDIA, Hugging Face eller OpenAI.</p>
+</footer>
+</main>
+</body>
+</html>
