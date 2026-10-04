@@ -1611,7 +1611,7 @@ function cxEta(j) {
   if (j.status === "done" || j.status === "error") { cxEtaState.delete(j.id); return ""; }
   let st = cxEtaState.get(j.id); if (!st) cxEtaState.set(j.id, st = { t0: null, p0: 0, last: null });
   const left = cxEtaCalc(j, st);
-  return left == null ? "" : " · " + cxEtaText(left);
+  return left == null ? "" : " ·\u00a0" + cxEtaText(left).replace(/ /g, "\u00a0");   // wraps as one unit on phones
 }
 
 // --- cx: notify ---
