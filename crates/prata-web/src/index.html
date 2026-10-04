@@ -1628,7 +1628,29 @@ function cxJobDone(j) {
   clearTimeout(cxTitleT);
   document.title = "✓ Klar – " + title;
   if (!document.hidden && document.hasFocus()) cxTitleT = setTimeout(cxResetTitle, 6000);   // seen already
+  if (document.hidden && cxCanNotify() && Notification.permission === "granted") {
+    try {
+      const n = new Notification("Transkriberingen är klar", { body: title, tag: "prata-done", icon: "/icon-192.png" });
+      n.onclick = () => { window.focus(); n.close(); };
+    } catch (_) {}   // e.g. Android Chrome only allows notifications from a service worker
+  }
 }
+// Desktop notification. Permission is asked once, on the first tap that starts a transcription
+// (Transkribera, the link's Transkribera/Enter, or stopping a recording); never on load and never
+// again after the prompt was answered or dismissed.
+function cxCanNotify() { return "Notification" in window && window.isSecureContext; }
+function cxAskNotify() {
+  if (!cxCanNotify() || Notification.permission !== "default") return;
+  try { if (localStorage.getItem("prata.notify.asked")) return; localStorage.setItem("prata.notify.asked", "1"); } catch (_) { return; }
+  try { const p = Notification.requestPermission(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest && e.target.closest("#go, #linkGo, #rec");
+  if (!t || t.disabled) return;
+  if (t.id === "rec" && !(rec && rec.state === "recording")) return;   // the tap that stops and transcribes
+  cxAskNotify();
+}, true);
+$("linkForm").addEventListener("submit", cxAskNotify, true);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && document.title !== cxBaseTitle) cxTitleT = setTimeout(cxResetTitle, 1500); });
 window.addEventListener("focus", () => { if (document.title !== cxBaseTitle) { clearTimeout(cxTitleT); cxTitleT = setTimeout(cxResetTitle, 1500); } });
 
