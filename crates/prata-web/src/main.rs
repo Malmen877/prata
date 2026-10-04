@@ -698,11 +698,15 @@ async fn update(st: &St, id: &str, f: impl FnOnce(&mut Job)) {
 }
 
 async fn ffmpeg_to_wav(input: &Path, out: &Path) -> Result<()> {
+    // `-map 0:a:0`: always the first audio stream. Voice Memos with Spatial Audio (APAC) and
+    // some video files carry several audio streams; ffmpeg's default pick is the "best" one
+    // (most channels), which is not necessarily the recording itself.
     let o = Command::new("ffmpeg")
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i"])
         .arg(input)
-        .args(["-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
+        .args(["-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
         .arg(out)
+        .kill_on_drop(true) // a cancelled job stops ffmpeg too
         .output()
         .await
         .context("kunde inte starta ffmpeg (är det installerat?)")?;
@@ -1811,6 +1815,32 @@ printf '1\n00:00:00,080 --> 00:00:01,200\nHej och välkommen.\n\n2\n00:00:01,520
             v.extend_from_slice(&x.to_le_bytes());
         }
         v
+    }
+
+    #[tokio::test]
+    async fn ffmpeg_to_wav_uses_first_audio_stream() {
+        if which("ffmpeg").is_none() {
+            eprintln!("skipped: no ffmpeg");
+            return;
+        }
+        // Two audio streams like a Spatial Audio voice memo: a:0 mono 1 s (the recording) and
+        // a:1 stereo 3 s marked as default. Without -map, ffmpeg picks a:1 and gives 3 s.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("multi.m4a");
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=1:sample_rate=16000",
+                "-f", "lavfi", "-i", "sine=frequency=880:duration=3:sample_rate=48000",
+                "-filter_complex", "[1:a]pan=stereo|c0=c0|c1=c0[st]",
+                "-map", "0:a", "-map", "[st]", "-c:a", "aac", "-disposition:a:0", "0", "-disposition:a:1", "default"])
+            .arg(&src)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let wav = dir.path().join("out.wav");
+        ffmpeg_to_wav(&src, &wav).await.unwrap();
+        let d = wav_duration(&wav).await;
+        assert!((d - 1.0).abs() < 0.15, "expected the 1 s first stream, got {d} s");
     }
 
     async fn upload(app: &Router, model: &str) -> String {
