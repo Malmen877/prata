@@ -1627,7 +1627,7 @@ $("cxShare").onclick = async () => {
     try { await navigator.share({ title, text }); return; }
     catch (e) { if (e && e.name === "AbortError") return; }   // user closed the sheet
   }
-  copyText(text, btn, "Kopierad ✓");
+  copyText(text, btn, "Kopierat ✓");
 };
 // --- cx: end ---
 
