@@ -697,7 +697,7 @@ impl Job {
 // so the startup sweep can mark orphaned (queued/running) jobs as failed and retryable.
 
 const JOB_INTERRUPTED: &str = "Avbröts när Prata startades om. Tryck Försök igen.";
-const JOB_CANCELLED: &str = "Avbruten.";
+const JOB_CANCELLED: &str = "Avbruten";
 const JOB_KEEP_DAYS: u64 = 7;
 
 #[derive(Serialize, Deserialize, Default)]
