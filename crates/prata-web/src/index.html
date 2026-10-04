@@ -967,7 +967,7 @@ async function poll() {
   $("conn").classList.add("hidden");
   if (j.status === "error") {
     if (j.source_url) jobIsLink = true;
-    if (j.cancelled) { jobFailed("Avbruten.", "Tryck Försök igen för att köra om."); $("statusText").textContent = "Avbruten"; return; }   // cx: queue
+    if (j.cancelled) { jobFailed("Avbruten.", "Tryck Försök igen för att köra om."); $("statusText").textContent = "Avbruten"; cxCardCancelled = jobId; cxCtl(); return; }   // cx: queue
     return jobFailed(j.source_url ? "Länken kunde inte transkriberas." : "Transkriberingen misslyckades.", j.error_user || humanError(j.error));
   }
   if (j.source_url) jobIsLink = true;
@@ -1004,7 +1004,8 @@ function flashDone() { const b = $("rec"); b.classList.add("flash"); setTimeout(
 // Several files at once: the first one uses the progress card, the rest wait in a small list
 // below it (ids in localStorage "prata.queue", so a reload keeps them). The server runs one
 // job at a time. Cancel, retry and delete use /api/jobs/{id}/cancel|retry and DELETE.
-let cxQ = [];   // [{id|null, name, status, error_user, retryable, file?}]
+let cxQ = [];   // [{id|null, name, status, error_user, retryable, cancelled, file?}]
+let cxCardCancelled = null;   // id of the card's job if it ended by Avbryt
 const cxQStatus = { uploading: "Laddar upp …", downloading: "Laddar ner …", queued: "I kö", converting: "Konverterar …", running: "Transkriberar …" };
 function cxQSave() { try { localStorage.setItem("prata.queue", JSON.stringify(cxQ.filter(x => x.id).map(x => x.id))); } catch (_) {} }
 function cxQRender() {
@@ -1021,11 +1022,11 @@ function cxQRender() {
   const waiting = cxQ.filter(x => x.status !== "error").length;
   el.innerHTML = `<div class="meta q-head">${waiting ? "Väntar på tur (" + waiting + ")" : "Kvar i kön"}</div>` + cxQ.map((x, i) => {
     const failed = x.status === "error";
-    const st = failed ? (x.error_user || "Misslyckades") : (cxQStatus[x.status] || x.status || "");
+    const st = failed ? (x.cancelled ? "Avbruten" : x.error_user || "Misslyckades") : (cxQStatus[x.status] || x.status || "");
     const btns = failed
       ? (x.retryable || x.file ? `<button type="button" class="btn" data-q="retry" data-i="${i}">Försök igen</button>` : "") + `<button type="button" class="btn" data-q="del" data-i="${i}">Ta bort</button>`
       : (x.id ? `<button type="button" class="btn" data-q="del" data-i="${i}" aria-label="Ta bort ${esc(x.name || "")} ur kön">Ta bort</button>` : "");
-    return `<div class="q-row${failed ? " failed" : ""}"><span class="q-name">${esc(x.name || x.filename || "")}</span><span class="meta q-st">${esc(st)}</span>${btns}</div>`;
+    return `<div class="q-row${failed && !x.cancelled ? " failed" : ""}"><span class="q-name">${esc(x.name || x.filename || "")}</span><span class="meta q-st">${esc(st)}</span>${btns}</div>`;
   }).join("");
 }
 async function cxUpload(f) {   // -> job id (throws on failure)
@@ -1063,6 +1064,7 @@ function cxAdopt(id, name) {   // show an existing server job in the progress ca
   $("statusText").textContent = STATUS.queued; $("procFile").textContent = name || ""; setSteps("queued"); setBar(null);
   try { localStorage.setItem("prata.job", id); } catch (_) {}
   poll(); timer = setInterval(poll, 1500);
+  cxCtl();   // Avbryt right away, not on the next tick
 }
 // next waiting job into the card (after the card's job finished or failed); a failed card job
 // moves into the list so its Försök igen / Ta bort stay reachable
@@ -1071,7 +1073,9 @@ function cxQAdopt() {
   const next = cxQ.find(x => x.id && x.status !== "error");
   if (!next) return false;
   if ($("statusCard").classList.contains("failed") && jobId && !cxQ.some(x => x.id === jobId))
-    cxQ.unshift({ id: jobId, name: $("procFile").textContent.split(" · ")[0], status: "error", error_user: $("err").textContent.replace(/^[^.]*\.\s*/, "") || "Misslyckades", retryable: true });
+    cxQ.unshift(cxCardCancelled === jobId
+      ? { id: jobId, name: $("procFile").textContent.split(" · ")[0], status: "error", cancelled: true, error_user: "Avbruten", retryable: true }
+      : { id: jobId, name: $("procFile").textContent.split(" · ")[0], status: "error", error_user: $("err").textContent.replace(/^[^.]*\.\s*/, "") || "Misslyckades", retryable: true });
   cxQ.splice(cxQ.indexOf(next), 1); cxQSave(); cxQRender();
   cxAdopt(next.id, next.name || next.filename);
   return true;
@@ -1088,7 +1092,7 @@ async function cxQRefresh() {
       const j = by.get(x.id);
       if (!j) return false;   // forgotten by the server
       if (j.status === "done") { done = true; return false; }
-      Object.assign(x, { status: j.status, error_user: j.error_user, retryable: j.retryable, filename: j.filename });
+      Object.assign(x, { status: j.status, error_user: j.error_user, retryable: j.retryable, cancelled: j.cancelled, filename: j.filename });
       return true;
     });
     if (done) refreshNotes();
@@ -1103,7 +1107,7 @@ async function cxQAction(act, x) {
     return;
   }
   if (x.file && !x.id) { cxQ.splice(cxQ.indexOf(x), 1); return cxEnqueue([x.file]); }   // upload failed: send again
-  try { const r = await fetch("/api/jobs/" + x.id + "/retry", { method: "POST" }); if (!r.ok) throw new Error(r.status); x.status = "queued"; x.error_user = null; }
+  try { const r = await fetch("/api/jobs/" + x.id + "/retry", { method: "POST" }); if (!r.ok) throw new Error(r.status); x.status = "queued"; x.error_user = null; x.cancelled = false; }
   catch (_) { x.retryable = false; x.error_user = "Kan inte köras om – ladda upp filen igen."; }
   cxQSave(); cxQRender(); cxQAdopt();
 }
