@@ -115,3 +115,20 @@ assert.equal(recGapMs(T, T - 2000, T - 1500), 0, "chunks kept coming (desktop ta
 assert.equal(recGapMs(T, T - 30000, T - 29500), 29500, "screen locked 29.5 s after the last chunk");
 assert.equal(recGapMs(T, T - 30000, T - 40000), 30000);
 console.log("ui recording watchdog tests: ok");
+
+// ---- cx: eta (needs jobProgress from the progress block)
+const em = /\/\/ --- cx: eta ---\n([\s\S]*?)\/\/ --- cx: notify ---/.exec(html);
+assert.ok(em, "cx: eta block not found");
+const ectx = {};
+vm.runInNewContext(pm[1] + em[1] + "\nthis.cxEta = cxEta; this.cxEtaText = cxEtaText;", ectx);
+const ej = (pct, t, extra = {}) => ({ id: "j1", status: "running", elapsed_s: t, audio_duration: 600, progress_pct: pct, log_tail: [], ...extra });
+assert.equal(ectx.cxEta(ej(10, 10)), "");          // first sample: nothing yet
+assert.equal(ectx.cxEta(ej(12, 13)), "");          // too little progress: still hidden
+assert.equal(ectx.cxEta(ej(30, 30)), " · ca 1 min kvar");   // 20 % in 20 s -> 70 s left
+assert.match(ectx.cxEta(ej(40, 40)), /^ · (ca 1 min|under 1 min) kvar$/);
+assert.equal(ectx.cxEta(ej(40, 40, { status: "done" })), "");
+assert.equal(ectx.cxEta(ej(50, 5, { id: "j2", log_tail: ["[info] downloading encoder-model.int8.onnx: 50% of 630 MB"], progress_pct: undefined })), "");
+assert.equal(ectx.cxEtaText(30), "under 1 min kvar");
+assert.equal(ectx.cxEtaText(150), "ca 3 min kvar");
+assert.equal(ectx.cxEtaText(4000), "ca 1 h 7 min kvar");
+console.log("ui eta tests: ok");
