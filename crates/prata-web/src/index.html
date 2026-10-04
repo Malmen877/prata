@@ -743,7 +743,7 @@ $("file").onchange = e => {
   const f = e.target.files[0], direct = e.target.dataset.direct === "1";
   delete e.target.dataset.direct; e.target.value = "";
   if (!f) return;
-  if (direct) { if (!busy) startJob(f, f.name); } else pick(f);
+  if (direct) { if (!busy) { cxAskNotify(); startJob(f, f.name); } } else pick(f);   // cx: notify (direct pick starts at once)
 };
 ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); if (!drop.classList.contains("is-off")) drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
@@ -1051,6 +1051,7 @@ async function cxEnqueue(files) {
 async function cxStartFiles(files) {
   files = files.filter(f => f && f.size);
   if (!files.length) return;
+  cxAskNotify();   // cx: notify (multi-file select / drop starts without a Transkribera tap)
   pick(null);
   if (busy) return cxEnqueue(files);
   const [first, ...rest] = files;
@@ -1936,7 +1937,8 @@ function cxEta(j) {
   if (j.status === "done" || j.status === "error") { cxEtaState.delete(j.id); return ""; }
   let st = cxEtaState.get(j.id); if (!st) cxEtaState.set(j.id, st = { t0: null, p0: 0, last: null });
   const left = cxEtaCalc(j, st);
-  return left == null ? "" : " ·\u00a0" + cxEtaText(left).replace(/ /g, "\u00a0");   // wraps as one unit on phones
+  // "\u00a0· " keeps the dot on the line before; the phrase itself never splits (breaks as one unit on phones)
+  return left == null ? "" : "\u00a0· " + cxEtaText(left).replace(/ /g, "\u00a0");
 }
 
 // --- cx: notify ---
@@ -1961,7 +1963,8 @@ function cxJobDone(j) {
   }
 }
 // Desktop notification. Permission is asked once, on the first tap that starts a transcription
-// (Transkribera, the link's Transkribera/Enter, or stopping a recording); never on load and never
+// (Transkribera, the link's Transkribera/Enter, stopping a recording, or picking/dropping files
+// that start right away); never on load and never
 // again after the prompt was answered or dismissed.
 function cxCanNotify() { return "Notification" in window && window.isSecureContext; }
 function cxAskNotify() {
